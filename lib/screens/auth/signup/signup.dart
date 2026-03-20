@@ -442,7 +442,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
             nextLabel: 'SIGN UP',
             isLastStep: true,
             onNext: () {
-              // TODO: submit registration
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(

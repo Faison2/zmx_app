@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../auction/auction.dart';
 import '../cash/cash.dart';
 import '../delivery /deliveries.dart';
 import '../drawer/drawer.dart';
@@ -24,7 +25,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     CashContent(),
     PortfolioContent(),
     DeliveriesContent(),
-    _PlaceholderPage(icon: Icons.gavel_rounded, label: 'Auction'),
+    AuctionContent(),
   ];
 
   @override
