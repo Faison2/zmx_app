@@ -76,12 +76,14 @@ class _PortfolioContentState extends State<PortfolioContent>
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: const Color(0xFF2DB144).withOpacity(0.12),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                  color: const Color(0xFF2DB144).withOpacity(0.3), width: 1),
+                  color: const Color(0xFF2DB144).withOpacity(0.3),
+                  width: 1),
             ),
             child: Row(
               children: const [
@@ -104,85 +106,267 @@ class _PortfolioContentState extends State<PortfolioContent>
     );
   }
 
-  // ── ZiG / USD Summary Card ────────────────────────────────────────────
+  // ── Summary Card ──────────────────────────────────────────────────────
   Widget _buildSummaryCard() {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.92),
-        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1E1E1E), Color(0xFF2D2D2D)],
+        ),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.07),
-            blurRadius: 14,
-            offset: const Offset(0, 4),
+            color: Colors.black.withOpacity(0.22),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          children: [
-            Expanded(child: _buildSummaryColumn('ZiG', '-10.45', '-10.45', false)),
-            VerticalDivider(
-              color: const Color(0xFFD4A017),
-              thickness: 1.5,
-              indent: 16,
-              endIndent: 16,
+      child: Column(
+        children: [
+          // ── Top: title + live badge ────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Portfolio Overview',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.55),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2DB144).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: const Color(0xFF2DB144).withOpacity(0.35),
+                        width: 1),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF2DB144),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      const Text(
+                        'LIVE',
+                        style: TextStyle(
+                          color: Color(0xFF2DB144),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            Expanded(child: _buildSummaryColumn('USD', '+\$10.45', '+\$10.45', true)),
-          ],
-        ),
+          ),
+
+          // ── Divider ───────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+            child: Divider(
+                color: Colors.white.withOpacity(0.08), height: 1),
+          ),
+
+          // ── Two currency columns ───────────────────────────────
+          IntrinsicHeight(
+            child: Row(
+              children: [
+                Expanded(
+                    child: _buildSummaryColumn(
+                        'ZiG', '-10.45', '-10.45', false)),
+                Container(
+                  width: 1,
+                  margin: const EdgeInsets.symmetric(vertical: 16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        const Color(0xFFD4A017).withOpacity(0.6),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                    child: _buildSummaryColumn(
+                        'USD', '+\$10.45', '+\$10.45', true)),
+              ],
+            ),
+          ),
+
+          // ── Bottom total bar ───────────────────────────────────
+          Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: Colors.white.withOpacity(0.07), width: 1),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Total Holdings',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Icon(Icons.trending_up_rounded,
+                        color: Color(0xFF2DB144), size: 16),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${_holdings.length} Assets',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildSummaryColumn(
-      String currency, String gainLoss, String portfolioValue, bool isPositive) {
-    final color = isPositive ? const Color(0xFF2DB144) : const Color(0xFFE53935);
+  Widget _buildSummaryColumn(String currency, String gainLoss,
+      String portfolioValue, bool isPositive) {
+    final color =
+    isPositive ? const Color(0xFF2DB144) : const Color(0xFFE53935);
+    final bgColor = isPositive
+        ? const Color(0xFF2DB144).withOpacity(0.08)
+        : const Color(0xFFE53935).withOpacity(0.08);
+
     return Padding(
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            currency,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF1A1A1A),
+          // Currency label pill
+          Container(
+            padding:
+            const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFD4A017).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              currency,
+              style: const TextStyle(
+                color: Color(0xFFD4A017),
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
             ),
           ),
+
           const SizedBox(height: 14),
-          _summaryRow('Gain/Loss:', gainLoss, color),
+
+          // Gain/Loss tile
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Gain / Loss',
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.45),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Icon(
+                      isPositive
+                          ? Icons.arrow_upward_rounded
+                          : Icons.arrow_downward_rounded,
+                      color: color,
+                      size: 14,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      gainLoss,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
           const SizedBox(height: 10),
-          _summaryRow('Portfolio Value:', portfolioValue, color),
+
+          // Portfolio value
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Portfolio Value',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.45),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                portfolioValue,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
-    );
-  }
-
-  Widget _summaryRow(String label, String value, Color valueColor) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF1A1A1A),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            color: valueColor,
-          ),
-        ),
-      ],
     );
   }
 
@@ -194,12 +378,12 @@ class _PortfolioContentState extends State<PortfolioContent>
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-         colors: [Color(0xFFD4A017), Color(0xFFB8890F)],
+          colors: [Color(0xFFD4A017), Color(0xFFB8890F)],
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-           color: const Color(0xFFD4A017).withOpacity(0.3),
+            color: const Color(0xFFD4A017).withOpacity(0.3),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -235,7 +419,8 @@ class _PortfolioContentState extends State<PortfolioContent>
       ),
       child: Container(
         margin: const EdgeInsets.fromLTRB(10, 10, 10, 0),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        padding:
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.95),
           borderRadius: BorderRadius.circular(14),
@@ -300,7 +485,8 @@ class _PortfolioContentState extends State<PortfolioContent>
 
             // Quantity + Value badge
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   begin: Alignment.topLeft,
