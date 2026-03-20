@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../cash/cash.dart';
+import '../delivery /deliveries.dart';
+import '../portifolio/portifolio.dart';
 import 'home.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -18,8 +20,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final List<Widget> _pages = const [
     HomeContent(),
     CashContent(),
-    _PlaceholderPage(icon: Icons.pie_chart_rounded, label: 'Portfolio'),
-    _PlaceholderPage(icon: Icons.local_shipping_rounded, label: 'Deliveries'),
+    PortfolioContent(),
+    DeliveriesContent(),
     _PlaceholderPage(icon: Icons.gavel_rounded, label: 'Auction'),
   ];
 
