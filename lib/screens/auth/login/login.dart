@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../dashboard/dashoard.dart';
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -132,7 +134,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
-                            // TODO: Handle login
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(builder: (context) => const DashboardScreen()),
+                            );
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFD4A017),
