@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../dashboard/dashoard.dart';
+import '../signup/signup.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -164,9 +165,14 @@ class _LoginScreenState extends State<LoginScreen> {
                       // SIGN UP button (green)
                       Expanded(
                         child: ElevatedButton(
-                          onPressed: () {
-                            // TODO: Navigate to sign up
-                          },
+                            onPressed:
+                                () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => const SignUpScreen()),
+                                  );
+                                },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF2DB144),
                             shape: RoundedRectangleBorder(
