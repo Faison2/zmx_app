@@ -1,10 +1,11 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import '../cash/cash.dart';
 import '../delivery /deliveries.dart';
+import '../drawer/drawer.dart';
 import '../portifolio/portifolio.dart';
+import '../profile/profile.dart';
 import 'home.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -16,6 +17,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedNavIndex = 0;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>(); // 👈 add
 
   final List<Widget> _pages = const [
     HomeContent(),
@@ -30,11 +32,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark,
       child: Scaffold(
+        key: _scaffoldKey, // 👈 add
         backgroundColor: const Color(0xFFF5F0E8),
         extendBody: true,
+
+        // 👇 add drawer
+        drawer: AppDrawer(
+          selectedIndex: _selectedNavIndex,
+          onNavTap: (index) => setState(() => _selectedNavIndex = index),
+        ),
+
         body: Stack(
           children: [
-            // Background gradient
             Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -44,8 +53,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
             ),
-
-            // All pages - IndexedStack keeps state alive
             SafeArea(
               bottom: false,
               child: Column(
@@ -60,8 +67,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
             ),
-
-            // Glass bottom nav always on top
             Positioned(
               bottom: 0,
               left: 0,
@@ -74,50 +79,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ── Shared Top Bar ────────────────────────────────────────────────────
   Widget _buildTopBar() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.07),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+          // 👇 updated — opens drawer
+          GestureDetector(
+            onTap: () => _scaffoldKey.currentState?.openDrawer(),
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.07),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.menu_rounded,
+                  color: Color(0xFF1A1A1A), size: 22),
             ),
-            child: const Icon(Icons.menu_rounded,
-                color: Color(0xFF1A1A1A), size: 22),
           ),
           Image.asset('assets/images/logo.png',
               height: 38, fit: BoxFit.contain),
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFF2DB144), width: 2),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF2DB144).withOpacity(0.25),
-                  blurRadius: 8,
-                ),
-              ],
+          // 👇 updated — opens profile
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => const ProfileScreen()),
             ),
-            child: ClipOval(
-              child: Container(
-                color: const Color(0xFF2DB144).withOpacity(0.15),
-                child: const Icon(Icons.person_rounded,
-                    color: Color(0xFF2DB144), size: 24),
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border:
+                Border.all(color: const Color(0xFF2DB144), width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF2DB144).withOpacity(0.25),
+                    blurRadius: 8,
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: Container(
+                  color: const Color(0xFF2DB144).withOpacity(0.15),
+                  child: const Icon(Icons.person_rounded,
+                      color: Color(0xFF2DB144), size: 24),
+                ),
               ),
             ),
           ),
@@ -126,7 +143,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ── Glass Bottom Nav ──────────────────────────────────────────────────
   Widget _buildGlassNavBar() {
     final items = [
       {'icon': Icons.home_rounded, 'label': 'Home'},
@@ -179,7 +195,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     boxShadow: isSelected
                         ? [
                       BoxShadow(
-                        color: const Color(0xFFD4A017).withOpacity(0.4),
+                        color:
+                        const Color(0xFFD4A017).withOpacity(0.4),
                         blurRadius: 12,
                         offset: const Offset(0, 4),
                       ),
@@ -221,7 +238,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-// ── Placeholder for unbuilt tabs ──────────────────────────────────────
 class _PlaceholderPage extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -233,7 +249,9 @@ class _PlaceholderPage extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 64, color: const Color(0xFF2DB144).withOpacity(0.4)),
+          Icon(icon,
+              size: 64,
+              color: const Color(0xFF2DB144).withOpacity(0.4)),
           const SizedBox(height: 16),
           Text(label,
               style: const TextStyle(
@@ -242,7 +260,8 @@ class _PlaceholderPage extends StatelessWidget {
                   color: Color(0xFF1A1A1A))),
           const SizedBox(height: 8),
           Text('Coming soon',
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+              style:
+              TextStyle(fontSize: 14, color: Colors.grey.shade500)),
         ],
       ),
     );
