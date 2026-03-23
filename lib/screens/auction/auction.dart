@@ -1,5 +1,144 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DATA MODEL
+// ─────────────────────────────────────────────────────────────────────────────
+class AuctionModel {
+  final int auctionId;
+  final String auctionCode;
+  final String auctionTitle;
+  final String auctionType;
+  final String? securityType;
+  final String issuerName;
+  final double totalVolume;
+  final double minBidAmount;
+  final double maxBidAmount;
+  final double bidIncrement;
+  final String startDate;
+  final String endDate;
+  final String settlementDate;
+  final String status;
+  final String allocationMethod;
+  final String? description;
+  final double couponRate;
+  final String maturityDate;
+  final double minimumYield;
+  final double maximumYield;
+
+  AuctionModel({
+    required this.auctionId,
+    required this.auctionCode,
+    required this.auctionTitle,
+    required this.auctionType,
+    this.securityType,
+    required this.issuerName,
+    required this.totalVolume,
+    required this.minBidAmount,
+    required this.maxBidAmount,
+    required this.bidIncrement,
+    required this.startDate,
+    required this.endDate,
+    required this.settlementDate,
+    required this.status,
+    required this.allocationMethod,
+    this.description,
+    required this.couponRate,
+    required this.maturityDate,
+    required this.minimumYield,
+    required this.maximumYield,
+  });
+
+  factory AuctionModel.fromJson(Map<String, dynamic> json) {
+    return AuctionModel(
+      auctionId: json['auctionId'] as int,
+      auctionCode: json['auctionCode'] as String,
+      auctionTitle: json['auctionTitle'] as String,
+      auctionType: json['auctionType'] as String,
+      securityType: json['securityType'] as String?,
+      issuerName: json['issuerName'] as String,
+      totalVolume: (json['totalVolume'] as num).toDouble(),
+      minBidAmount: (json['minBidAmount'] as num).toDouble(),
+      maxBidAmount: (json['maxBidAmount'] as num).toDouble(),
+      bidIncrement: (json['bidIncrement'] as num).toDouble(),
+      startDate: _formatDateTime(json['startDate'] as String),
+      endDate: _formatDateTime(json['endDate'] as String),
+      settlementDate: _formatDate(json['settlementDate'] as String),
+      status: json['status'] as String,
+      allocationMethod: json['allocationMethod'] as String,
+      description: json['description'] as String?,
+      couponRate: (json['couponRate'] as num).toDouble(),
+      maturityDate: _formatDate(json['maturityDate'] as String),
+      minimumYield: (json['minimumYield'] as num).toDouble(),
+      maximumYield: (json['maximumYield'] as num).toDouble(),
+    );
+  }
+
+  static String _formatDateTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      final months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      ];
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '${dt.day} ${months[dt.month - 1]} ${dt.year} $h:$m';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  static String _formatDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso);
+      final months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      ];
+      return '${dt.day} ${months[dt.month - 1]} ${dt.year}';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  String get category => '$auctionCode · $auctionType';
+  String get formattedTotalVolume => '\$${_compact(totalVolume)}';
+  String get formattedMinBid => '\$${_compact(minBidAmount)}';
+  String get formattedMaxBid => '\$${_compact(maxBidAmount)}';
+  String get formattedBidIncrement => '\$${_compact(bidIncrement)}';
+  String get formattedCouponRate => '${couponRate.toStringAsFixed(2)}%';
+
+  static String _compact(double v) {
+    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000) return '${(v / 1000).toStringAsFixed(1)}K';
+    return v % 1 == 0 ? v.toInt().toString() : v.toStringAsFixed(2);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API SERVICE
+// ─────────────────────────────────────────────────────────────────────────────
+class AuctionService {
+  static const String _baseUrl = 'http://192.168.3.203:5049';
+
+  static Future<List<AuctionModel>> fetchByStatus(String status) async {
+    final uri = Uri.parse('$_baseUrl/v1/auction/status?status=$status');
+    final response = await http.get(uri).timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      final List<dynamic> data = jsonDecode(response.body);
+      return data.map((e) => AuctionModel.fromJson(e)).toList();
+    } else {
+      throw Exception('Failed to load auctions (${response.statusCode})');
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUCTION CONTENT
+// ─────────────────────────────────────────────────────────────────────────────
 class AuctionContent extends StatefulWidget {
   const AuctionContent({super.key});
 
@@ -12,92 +151,9 @@ class _AuctionContentState extends State<AuctionContent>
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
 
-  final List<Map<String, dynamic>> _auctions = [
-    {
-      'category': 'MAIZE · COMMODITY',
-      'title': 'WHITE MAIZE',
-      'issuer': 'ZMX',
-      'status': 'ACTIVE',
-      'totalVolume': '\$500',
-      'minBid': '\$340',
-      'maxBid': '\$400',
-      'bidsReceived': '0',
-      'couponRate': '1.00%',
-      'subscription': '0.0% (\$0 / \$500)',
-      'bidIncrement': '\$5',
-      'type': 'COMMODITY',
-      'securityType': 'Agricultural',
-      'allocationMethod': 'DUTCH',
-      'startDate': '20 Mar 2026 13:55',
-      'endDate': '20 Mar 2026 14:05',
-      'settlementDate': '20 Mar 2026',
-      'maturity': '20 Mar 2026',
-      'description': 'Premium white maize sourced from local farms.',
-    },
-    {
-      'category': 'SOYABEANS LOT 2 · COMMODITY',
-      'title': 'SOYABEANS',
-      'issuer': 'ZMX',
-      'status': 'ACTIVE',
-      'totalVolume': '\$1,000',
-      'minBid': '\$540',
-      'maxBid': '\$650',
-      'bidsReceived': '3',
-      'couponRate': '1.00%',
-      'subscription': '0.0% (\$0 / \$1,000)',
-      'bidIncrement': '\$5',
-      'type': 'COMMODITY',
-      'securityType': 'Agricultural',
-      'allocationMethod': 'DUTCH',
-      'startDate': '20 Mar 2026 14:00',
-      'endDate': '20 Mar 2026 15:00',
-      'settlementDate': '20 Mar 2026',
-      'maturity': '20 Mar 2026',
-      'description': 'No description available',
-    },
-    {
-      'category': 'WHEAT · COMMODITY',
-      'title': 'HARD RED WHEAT',
-      'issuer': 'ZMX',
-      'status': 'CLOSED',
-      'totalVolume': '\$750',
-      'minBid': '\$280',
-      'maxBid': '\$350',
-      'bidsReceived': '7',
-      'couponRate': '1.50%',
-      'subscription': '85.0% (\$637 / \$750)',
-      'bidIncrement': '\$5',
-      'type': 'COMMODITY',
-      'securityType': 'Agricultural',
-      'allocationMethod': 'DUTCH',
-      'startDate': '19 Mar 2026 09:00',
-      'endDate': '19 Mar 2026 11:00',
-      'settlementDate': '20 Mar 2026',
-      'maturity': '20 Jun 2026',
-      'description': 'Hard red wheat grade A quality.',
-    },
-    {
-      'category': 'TOBACCO · COMMODITY',
-      'title': 'FLUE CURED TOBACCO',
-      'issuer': 'ZMX',
-      'status': 'ACTIVE',
-      'totalVolume': '\$2,500',
-      'minBid': '\$800',
-      'maxBid': '\$1,200',
-      'bidsReceived': '12',
-      'couponRate': '2.00%',
-      'subscription': '40.0% (\$1,000 / \$2,500)',
-      'bidIncrement': '\$10',
-      'type': 'COMMODITY',
-      'securityType': 'Agricultural',
-      'allocationMethod': 'DUTCH',
-      'startDate': '20 Mar 2026 10:00',
-      'endDate': '20 Mar 2026 16:00',
-      'settlementDate': '21 Mar 2026',
-      'maturity': '20 Sep 2026',
-      'description': 'Grade A flue cured tobacco bales.',
-    },
-  ];
+  List<AuctionModel> _auctions = [];
+  bool _isLoading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -106,7 +162,31 @@ class _AuctionContentState extends State<AuctionContent>
         vsync: this, duration: const Duration(milliseconds: 450));
     _fadeAnimation =
         CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut);
-    _fadeController.forward();
+    _loadAuctions();
+  }
+
+  Future<void> _loadAuctions() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final data = await AuctionService.fetchByStatus('ACTIVE');
+      if (mounted) {
+        setState(() {
+          _auctions = data;
+          _isLoading = false;
+        });
+        _fadeController.forward(from: 0);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
+    }
   }
 
   @override
@@ -115,9 +195,7 @@ class _AuctionContentState extends State<AuctionContent>
     super.dispose();
   }
 
-  bool _isActive(String status) => status == 'ACTIVE';
-
-  void _showPlaceBid(Map<String, dynamic> auction) {
+  void _showPlaceBid(AuctionModel auction) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -126,7 +204,7 @@ class _AuctionContentState extends State<AuctionContent>
     );
   }
 
-  void _showDetails(Map<String, dynamic> auction) {
+  void _showDetails(AuctionModel auction) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -137,6 +215,9 @@ class _AuctionContentState extends State<AuctionContent>
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) return _buildLoading();
+    if (_error != null) return _buildError();
+
     return FadeTransition(
       opacity: _fadeAnimation,
       child: ListView(
@@ -146,6 +227,7 @@ class _AuctionContentState extends State<AuctionContent>
         ),
         children: [
           _buildHeader(),
+          if (_auctions.isEmpty) _buildEmpty(),
           ..._auctions.asMap().entries.map(
                 (e) => _buildAuctionCard(e.value, e.key),
           ),
@@ -154,9 +236,94 @@ class _AuctionContentState extends State<AuctionContent>
     );
   }
 
+  // ── Loading ──────────────────────────────────────────────────────────────
+  Widget _buildLoading() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(color: Color(0xFF2DB144)),
+          SizedBox(height: 16),
+          Text(
+            'Loading auctions...',
+            style: TextStyle(color: Colors.grey, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Error ────────────────────────────────────────────────────────────────
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.wifi_off_rounded, size: 52, color: Colors.redAccent),
+            const SizedBox(height: 16),
+            const Text(
+              'Failed to load auctions',
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1A1A1A)),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _error ?? '',
+              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            GestureDetector(
+              onTap: _loadAuctions,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 28, vertical: 13),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF2DB144), Color(0xFF1E8E32)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'Retry',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Empty ────────────────────────────────────────────────────────────────
+  Widget _buildEmpty() {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 60),
+      child: Column(
+        children: [
+          Icon(Icons.gavel_rounded, size: 48, color: Colors.grey),
+          SizedBox(height: 12),
+          Text(
+            'No active auctions',
+            style: TextStyle(
+                color: Colors.grey, fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Header ───────────────────────────────────────────────────────────────
   Widget _buildHeader() {
-    final activeCount =
-        _auctions.where((a) => a['status'] == 'ACTIVE').length;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
       child: Row(
@@ -170,40 +337,60 @@ class _AuctionContentState extends State<AuctionContent>
               color: Color(0xFF1A1A1A),
             ),
           ),
-          Container(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF2DB144).withOpacity(0.12),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: const Color(0xFF2DB144).withOpacity(0.35),
-                  width: 1),
-            ),
-            child: Text(
-              '$activeCount Active',
-              style: const TextStyle(
-                color: Color(0xFF2DB144),
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+          Row(
+            children: [
+              Container(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2DB144).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                      color: const Color(0xFF2DB144).withOpacity(0.35),
+                      width: 1),
+                ),
+                child: Text(
+                  '${_auctions.length} Active',
+                  style: const TextStyle(
+                    color: Color(0xFF2DB144),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+              // Refresh button
+              GestureDetector(
+                onTap: _loadAuctions,
+                child: Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: const Icon(Icons.refresh_rounded,
+                      size: 16, color: Color(0xFF1A1A1A)),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildAuctionCard(Map<String, dynamic> auction, int index) {
-    final active = _isActive(auction['status']);
+  // ── Auction Card ─────────────────────────────────────────────────────────
+  Widget _buildAuctionCard(AuctionModel auction, int index) {
+    final active = auction.status == 'ACTIVE';
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: 300 + index * 80),
       curve: Curves.easeOut,
       builder: (context, value, child) => Opacity(
         opacity: value,
-        child:
-        Transform.translate(offset: Offset(0, 20 * (1 - value)), child: child),
+        child: Transform.translate(
+            offset: Offset(0, 20 * (1 - value)), child: child),
       ),
       child: Container(
         margin: const EdgeInsets.fromLTRB(16, 0, 16, 14),
@@ -227,29 +414,33 @@ class _AuctionContentState extends State<AuctionContent>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Card Header ──────────────────────────────────────
+            // Header
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    auction['category'],
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFFD4A017),
-                      letterSpacing: 0.5,
+                  Expanded(
+                    child: Text(
+                      auction.category,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFD4A017),
+                        letterSpacing: 0.5,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  _statusBadge(auction['status']),
+                  const SizedBox(width: 8),
+                  _statusBadge(auction.status),
                 ],
               ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
               child: Text(
-                auction['title'],
+                auction.auctionTitle,
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w900,
@@ -260,17 +451,16 @@ class _AuctionContentState extends State<AuctionContent>
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               child: Text(
-                auction['issuer'],
-                style: TextStyle(
-                    fontSize: 12, color: Colors.grey.shade500),
+                auction.issuerName,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
               ),
             ),
 
-            // ── Stats Row ────────────────────────────────────────
+            // Stats Row
             Container(
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 12),
+              padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               decoration: BoxDecoration(
                 color: const Color(0xFFF5F0E8),
                 borderRadius: BorderRadius.circular(14),
@@ -278,34 +468,36 @@ class _AuctionContentState extends State<AuctionContent>
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  _statItem('TOTAL VOLUME', auction['totalVolume']),
+                  _statItem('TOTAL VOLUME', auction.formattedTotalVolume),
                   _statDivider(),
-                  _statItem('MIN BID', auction['minBid']),
+                  _statItem('MIN BID', auction.formattedMinBid),
                   _statDivider(),
-                  _statItem('BIDS RECEIVED', auction['bidsReceived']),
+                  _statItem('MAX BID', auction.formattedMaxBid),
                   _statDivider(),
-                  _statItem('COUPON RATE', auction['couponRate']),
+                  _statItem('COUPON RATE', auction.formattedCouponRate),
                 ],
               ),
             ),
 
-            // ── Subscription ─────────────────────────────────────
+            // Bid range pill
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('SUBSCRIPTION',
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey.shade500,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: 0.5)),
                   Text(
-                    auction['subscription'],
+                    'BID RANGE',
+                    style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey.shade500,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5),
+                  ),
+                  Text(
+                    '${auction.formattedMinBid} – ${auction.formattedMaxBid}  ·  +${auction.formattedBidIncrement} step',
                     style: const TextStyle(
                       fontSize: 11,
-                      color: Color(0xFFE53935),
+                      color: Color(0xFFD4A017),
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -313,47 +505,14 @@ class _AuctionContentState extends State<AuctionContent>
               ),
             ),
 
-            // ── Progress bar ─────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 14),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(4),
-                child: LinearProgressIndicator(
-                  value: double.tryParse(
-                      auction['subscription']
-                          .toString()
-                          .replaceAll('%', '')
-                          .split('(')
-                          .first
-                          .trim()) !=
-                      null
-                      ? (double.parse(auction['subscription']
-                      .toString()
-                      .replaceAll('%', '')
-                      .split('(')
-                      .first
-                      .trim()) /
-                      100)
-                      .clamp(0.0, 1.0)
-                      : 0,
-                  backgroundColor: Colors.grey.shade200,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    active
-                        ? const Color(0xFF2DB144)
-                        : Colors.grey.shade400,
-                  ),
-                  minHeight: 5,
-                ),
-              ),
-            ),
+            const SizedBox(height: 12),
 
-            // ── Bottom Actions ────────────────────────────────────
+            // Bottom Actions
             Container(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
               decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(
-                      color: Colors.grey.shade100, width: 1),
+                  top: BorderSide(color: Colors.grey.shade100, width: 1),
                 ),
               ),
               child: Row(
@@ -388,7 +547,7 @@ class _AuctionContentState extends State<AuctionContent>
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          auction['status'],
+                          auction.status,
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w800,
@@ -413,7 +572,8 @@ class _AuctionContentState extends State<AuctionContent>
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
-                            color: const Color(0xFFD4A017).withOpacity(0.5),
+                            color:
+                            const Color(0xFFD4A017).withOpacity(0.5),
                             width: 1.5),
                       ),
                       child: const Text(
@@ -529,8 +689,7 @@ class _AuctionContentState extends State<AuctionContent>
   }
 
   Widget _statDivider() {
-    return Container(
-        width: 1, height: 28, color: Colors.grey.shade300);
+    return Container(width: 1, height: 28, color: Colors.grey.shade300);
   }
 }
 
@@ -538,7 +697,7 @@ class _AuctionContentState extends State<AuctionContent>
 // PLACE BID BOTTOM SHEET
 // ─────────────────────────────────────────────────────────────────────────────
 class _PlaceBidSheet extends StatefulWidget {
-  final Map<String, dynamic> auction;
+  final AuctionModel auction;
   const _PlaceBidSheet({required this.auction});
 
   @override
@@ -571,7 +730,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
   @override
   Widget build(BuildContext context) {
     final auction = widget.auction;
-    final active = auction['status'] == 'ACTIVE';
+    final active = auction.status == 'ACTIVE';
 
     return Container(
       decoration: const BoxDecoration(
@@ -602,7 +761,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
               ),
             ),
 
-            // Title
             const Text(
               'Place Bid',
               style: TextStyle(
@@ -630,7 +788,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    auction['category'].toString().split('·').first.trim(),
+                    auction.auctionCode,
                     style: const TextStyle(
                       color: Color(0xFFD4A017),
                       fontSize: 12,
@@ -640,7 +798,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    auction['title'],
+                    auction.auctionTitle,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -649,7 +807,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Min: ${auction['minBid']} | Max: ${auction['maxBid']} | Increment: ${auction['bidIncrement']}',
+                    'Min: ${auction.formattedMinBid}  |  Max: ${auction.formattedMaxBid}  |  Step: ${auction.formattedBidIncrement}',
                     style: TextStyle(
                         fontSize: 12, color: Colors.white.withOpacity(0.55)),
                   ),
@@ -671,7 +829,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                       ),
                     ),
                     child: Text(
-                      auction['status'],
+                      auction.status,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
@@ -687,7 +845,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
             const SizedBox(height: 20),
 
-            // CLIENT
             _sectionLabel('CLIENT (ON BEHALF OF)'),
             const SizedBox(height: 8),
             _darkTextField(
@@ -699,15 +856,14 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
             const SizedBox(height: 18),
 
-            // BID TYPE
             _sectionLabel('BID TYPE'),
             const SizedBox(height: 10),
             Container(
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.06),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                    color: Colors.white.withOpacity(0.1), width: 1),
+                border:
+                Border.all(color: Colors.white.withOpacity(0.1), width: 1),
               ),
               child: Row(
                 children: [
@@ -719,7 +875,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
             const SizedBox(height: 18),
 
-            // BID PRICE
             _sectionLabel('BID PRICE'),
             const SizedBox(height: 8),
             _darkTextField(
@@ -731,7 +886,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
             const SizedBox(height: 18),
 
-            // QUANTITY
             _sectionLabel('QUANTITY'),
             const SizedBox(height: 8),
             _darkTextField(
@@ -743,13 +897,12 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
             const SizedBox(height: 18),
 
-            // BID AMOUNT
             _sectionLabel('BID AMOUNT'),
             const SizedBox(height: 8),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 16),
+              padding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.04),
                 borderRadius: BorderRadius.circular(14),
@@ -770,7 +923,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
             const SizedBox(height: 28),
 
-            // Buttons
             Row(
               children: [
                 Expanded(
@@ -782,8 +934,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                         color: Colors.white.withOpacity(0.08),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                            color: Colors.white.withOpacity(0.15),
-                            width: 1),
+                            color: Colors.white.withOpacity(0.15), width: 1),
                       ),
                       child: const Text(
                         'Cancel',
@@ -816,8 +967,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                         boxShadow: active
                             ? [
                           BoxShadow(
-                            color: const Color(0xFF2DB144)
-                                .withOpacity(0.4),
+                            color: const Color(0xFF2DB144).withOpacity(0.4),
                             blurRadius: 12,
                             offset: const Offset(0, 4),
                           )
@@ -845,17 +995,15 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     );
   }
 
-  Widget _sectionLabel(String label) {
-    return Text(
-      label,
-      style: const TextStyle(
-        color: Colors.white60,
-        fontSize: 11,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 1.0,
-      ),
-    );
-  }
+  Widget _sectionLabel(String label) => Text(
+    label,
+    style: const TextStyle(
+      color: Colors.white60,
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 1.0,
+    ),
+  );
 
   Widget _darkTextField({
     required TextEditingController controller,
@@ -868,8 +1016,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.06),
         borderRadius: BorderRadius.circular(14),
-        border:
-        Border.all(color: Colors.white.withOpacity(0.1), width: 1),
+        border: Border.all(color: Colors.white.withOpacity(0.1), width: 1),
       ),
       child: TextField(
         controller: controller,
@@ -878,11 +1025,11 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
         style: const TextStyle(color: Colors.white, fontSize: 15),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: TextStyle(
-              color: Colors.white.withOpacity(0.3), fontSize: 15),
+          hintStyle:
+          TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 15),
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-              horizontal: 16, vertical: 15),
+          contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
           suffixIcon: suffixIcon,
         ),
       ),
@@ -917,12 +1064,10 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
             label,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: isSelected
-                  ? Colors.white
-                  : Colors.white.withOpacity(0.45),
+              color:
+              isSelected ? Colors.white : Colors.white.withOpacity(0.45),
               fontSize: 14,
-              fontWeight:
-              isSelected ? FontWeight.w800 : FontWeight.w500,
+              fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
             ),
           ),
         ),
@@ -935,12 +1080,12 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 // AUCTION DETAILS SCREEN
 // ─────────────────────────────────────────────────────────────────────────────
 class _AuctionDetailsScreen extends StatelessWidget {
-  final Map<String, dynamic> auction;
+  final AuctionModel auction;
   const _AuctionDetailsScreen({required this.auction});
 
   @override
   Widget build(BuildContext context) {
-    final active = auction['status'] == 'ACTIVE';
+    final active = auction.status == 'ACTIVE';
     return Scaffold(
       backgroundColor: const Color(0xFF141414),
       body: SafeArea(
@@ -960,16 +1105,14 @@ class _AuctionDetailsScreen extends StatelessWidget {
                         color: Colors.white.withOpacity(0.08),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Icon(
-                          Icons.arrow_back_ios_new_rounded,
-                          color: Colors.white,
-                          size: 18),
+                      child: const Icon(Icons.arrow_back_ios_new_rounded,
+                          color: Colors.white, size: 18),
                     ),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
                     child: Text(
-                      auction['title'],
+                      auction.auctionTitle,
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -977,7 +1120,7 @@ class _AuctionDetailsScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  _statusBadge(auction['status']),
+                  _statusBadge(auction.status),
                 ],
               ),
             ),
@@ -986,7 +1129,7 @@ class _AuctionDetailsScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 children: [
-                  // Row 1: Auction Info + Volume & Pricing
+                  // Row 1
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -994,12 +1137,14 @@ class _AuctionDetailsScreen extends StatelessWidget {
                         child: _detailCard(
                           title: 'AUCTION INFORMATION',
                           rows: [
-                            _detailRow('Title', auction['title']),
-                            _detailRow('Type', auction['type']),
-                            _detailRow('Security Type', auction['securityType']),
-                            _detailRow('Issuer', auction['issuer']),
-                            _detailRow('Allocation Method', auction['allocationMethod']),
-                            _detailRow('Status', auction['status'],
+                            _detailRow('Title', auction.auctionTitle),
+                            _detailRow('Type', auction.auctionType),
+                            _detailRow('Security Type',
+                                auction.securityType ?? 'N/A'),
+                            _detailRow('Issuer', auction.issuerName),
+                            _detailRow(
+                                'Allocation', auction.allocationMethod),
+                            _detailRow('Status', auction.status,
                                 valueColor: active
                                     ? const Color(0xFF2DB144)
                                     : Colors.grey),
@@ -1011,12 +1156,18 @@ class _AuctionDetailsScreen extends StatelessWidget {
                         child: _detailCard(
                           title: 'VOLUME & PRICING',
                           rows: [
-                            _detailRow('Total Volume', auction['totalVolume']),
-                            _detailRow('Min Bid', auction['minBid']),
-                            _detailRow('Max Bid', auction['maxBid']),
-                            _detailRow('Bid Increment', auction['bidIncrement']),
-                            _detailRow('Coupon Rate', auction['couponRate']),
-                            _detailRow('Maturity', auction['maturity']),
+                            _detailRow('Total Volume',
+                                auction.formattedTotalVolume),
+                            _detailRow('Min Bid', auction.formattedMinBid),
+                            _detailRow('Max Bid', auction.formattedMaxBid),
+                            _detailRow(
+                                'Bid Step', auction.formattedBidIncrement),
+                            _detailRow(
+                                'Coupon Rate', auction.formattedCouponRate),
+                            _detailRow('Min Yield',
+                                '${auction.minimumYield.toStringAsFixed(2)}%'),
+                            _detailRow('Max Yield',
+                                '${auction.maximumYield.toStringAsFixed(2)}%'),
                           ],
                         ),
                       ),
@@ -1025,7 +1176,7 @@ class _AuctionDetailsScreen extends StatelessWidget {
 
                   const SizedBox(height: 12),
 
-                  // Row 2: Timeline + Description
+                  // Row 2
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1033,9 +1184,11 @@ class _AuctionDetailsScreen extends StatelessWidget {
                         child: _detailCard(
                           title: 'TIMELINE',
                           rows: [
-                            _detailRow('Start Date', auction['startDate']),
-                            _detailRow('End Date', auction['endDate']),
-                            _detailRow('Settlement Date', auction['settlementDate']),
+                            _detailRow('Start', auction.startDate),
+                            _detailRow('End', auction.endDate),
+                            _detailRow(
+                                'Settlement', auction.settlementDate),
+                            _detailRow('Maturity', auction.maturityDate),
                           ],
                         ),
                       ),
@@ -1047,7 +1200,9 @@ class _AuctionDetailsScreen extends StatelessWidget {
                           extra: Padding(
                             padding: const EdgeInsets.only(top: 4),
                             child: Text(
-                              auction['description'],
+                              auction.description?.isNotEmpty == true
+                                  ? auction.description!
+                                  : 'No description available.',
                               style: TextStyle(
                                 fontSize: 13,
                                 color: Colors.white.withOpacity(0.6),
@@ -1062,7 +1217,6 @@ class _AuctionDetailsScreen extends StatelessWidget {
 
                   const SizedBox(height: 20),
 
-                  // Place Bid button
                   if (active)
                     GestureDetector(
                       onTap: () {
@@ -1071,8 +1225,7 @@ class _AuctionDetailsScreen extends StatelessWidget {
                           context: context,
                           isScrollControlled: true,
                           backgroundColor: Colors.transparent,
-                          builder: (_) =>
-                              _PlaceBidSheet(auction: auction),
+                          builder: (_) => _PlaceBidSheet(auction: auction),
                         );
                       },
                       child: Container(
@@ -1081,16 +1234,13 @@ class _AuctionDetailsScreen extends StatelessWidget {
                         const EdgeInsets.symmetric(vertical: 16),
                         decoration: BoxDecoration(
                           gradient: const LinearGradient(
-                            colors: [
-                              Color(0xFF2DB144),
-                              Color(0xFF1E8E32)
-                            ],
+                            colors: [Color(0xFF2DB144), Color(0xFF1E8E32)],
                           ),
                           borderRadius: BorderRadius.circular(16),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFF2DB144)
-                                  .withOpacity(0.4),
+                              color:
+                              const Color(0xFF2DB144).withOpacity(0.4),
                               blurRadius: 14,
                               offset: const Offset(0, 6),
                             ),
@@ -1154,8 +1304,7 @@ class _AuctionDetailsScreen extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.05),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-            color: Colors.white.withOpacity(0.08), width: 1),
+        border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1190,9 +1339,7 @@ class _AuctionDetailsScreen extends StatelessWidget {
             child: Text(
               label,
               style: TextStyle(
-                fontSize: 11,
-                color: Colors.white.withOpacity(0.45),
-              ),
+                  fontSize: 11, color: Colors.white.withOpacity(0.45)),
             ),
           ),
           const SizedBox(width: 6),
