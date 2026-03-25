@@ -1,7 +1,44 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  String _name         = '';
+  String _cds          = '';
+  String _email        = '';
+  String _phone        = '';
+  String _brokerName   = '';
+  String _broker       = '';
+  String _pin          = '';
+  String _hasCompany   = '';
+  String _accountType  = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _name        = prefs.getString('user_name')         ?? '-';
+      _cds         = prefs.getString('user_cds')          ?? '-';
+      _email       = prefs.getString('user_email')        ?? '-';
+      _phone       = prefs.getString('user_phone')        ?? '-';
+      _brokerName  = prefs.getString('user_brokerName')   ?? '-';
+      _broker      = prefs.getString('user_broker')       ?? 'NONE';
+      _pin         = prefs.getString('user_pin')          ?? '-';
+      _hasCompany  = prefs.getString('user_has_company')  ?? '-';
+      _accountType = prefs.getString('user_account_type') ?? '-';
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +66,8 @@ class ProfileScreen extends StatelessWidget {
                       _buildProfileHeader(),
                       const SizedBox(height: 24),
                       _buildBasicInfoCard(),
+                      const SizedBox(height: 16),
+                      _buildAccountInfoCard(),
                       const SizedBox(height: 16),
                       _buildBankingInfoCard(),
                     ],
@@ -95,8 +134,7 @@ class ProfileScreen extends StatelessWidget {
                 height: 90,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                      color: const Color(0xFFD4A017), width: 2),
+                  border: Border.all(color: const Color(0xFFD4A017), width: 2),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.12),
@@ -114,7 +152,6 @@ class ProfileScreen extends StatelessWidget {
                   ),
                 ),
               ),
-              // Edit badge
               Positioned(
                 bottom: 0,
                 left: 0,
@@ -124,8 +161,7 @@ class ProfileScreen extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: const Color(0xFFD4A017),
                     shape: BoxShape.circle,
-                    border:
-                    Border.all(color: Colors.white, width: 2),
+                    border: Border.all(color: Colors.white, width: 2),
                     boxShadow: [
                       BoxShadow(
                         color: const Color(0xFFD4A017).withOpacity(0.4),
@@ -143,21 +179,41 @@ class ProfileScreen extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Tafadzwa Moyo',
-                style: TextStyle(
+              // ── Dynamic name ──────────────────────────────────
+              Text(
+                _name,
+                style: const TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
                   color: Color(0xFF1A1A1A),
                 ),
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
+              // ── Dynamic CDS ───────────────────────────────────
               Text(
-                '0/535411',
+                _cds,
                 style: TextStyle(
                   fontSize: 15,
                   color: Colors.grey.shade600,
                   fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 6),
+              // ── Account type badge ────────────────────────────
+              Container(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2DB144).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _accountType == 'i' ? 'Individual Account' : 'Corporate Account',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF2DB144),
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
@@ -172,11 +228,23 @@ class ProfileScreen extends StatelessWidget {
     return _infoCard(
       title: 'Basic Information',
       children: [
-        _infoRow('Email:', 'moyo-t@gmail.com'),
-        _infoRow('Mobile:', '0771 234 567'),
-        _infoRow('ID Number:', '12-34567-M-89'),
-        _infoRow('Custodian:', 'CABS'),
-        _infoRow('Broker:', 'NONE'),
+        _infoRow('Email',  _email),
+        _infoRow('Mobile', _phone),
+        _infoRow('CDS No', _cds),
+      ],
+    );
+  }
+
+  // ── Account Information ───────────────────────────────────────────────
+  Widget _buildAccountInfoCard() {
+    return _infoCard(
+      title: 'Account Information',
+      children: [
+        _infoRow('Broker Name',   _brokerName.isNotEmpty ? _brokerName : 'NONE'),
+        _infoRow('Broker',        _broker.isNotEmpty     ? _broker     : 'NONE'),
+        _infoRow('Account Type',  _accountType == 'i' ? 'Individual' : 'Corporate'),
+        _infoRow('Has Company',   _hasCompany == 'true' ? 'Yes' : 'No'),
+        _infoRow('Trading PIN',   _pin.replaceAll(RegExp(r'.'), '•')), // masked
       ],
     );
   }
@@ -186,7 +254,6 @@ class ProfileScreen extends StatelessWidget {
     return _infoCard(
       title: 'Banking Information',
       children: [
-        // ZiG Account
         _bankAccountCard(
           bank: 'FBC Bank',
           branch: 'Samora',
@@ -194,7 +261,6 @@ class ProfileScreen extends StatelessWidget {
           accountType: 'ZiG',
         ),
         const SizedBox(height: 12),
-        // USD Account
         _bankAccountCard(
           bank: 'FBC Bank',
           branch: 'Samora',
@@ -206,8 +272,7 @@ class ProfileScreen extends StatelessWidget {
   }
 
   // ── Reusable card shell ───────────────────────────────────────────────
-  Widget _infoCard(
-      {required String title, required List<Widget> children}) {
+  Widget _infoCard({required String title, required List<Widget> children}) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.92),
@@ -223,7 +288,6 @@ class ProfileScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Card header
           Padding(
             padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
             child: Row(
@@ -316,13 +380,13 @@ class ProfileScreen extends StatelessWidget {
       ),
       child: Column(
         children: [
-          _bankRow('Bank', bank),
+          _bankRow('Bank',           bank),
           const SizedBox(height: 8),
-          _bankRow('Branch', branch),
+          _bankRow('Branch',         branch),
           const SizedBox(height: 8),
           _bankRow('Account Number', accountNumber),
           const SizedBox(height: 8),
-          _bankRow('Account Type', accountType),
+          _bankRow('Account Type',   accountType),
         ],
       ),
     );
@@ -332,22 +396,16 @@ class ProfileScreen extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            color: Color(0xFF1A1A1A),
-          ),
-        ),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 13,
-            color: Colors.grey.shade700,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF1A1A1A))),
+        Text(value,
+            style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w500)),
       ],
     );
   }

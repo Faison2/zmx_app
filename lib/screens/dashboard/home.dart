@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class HomeContent extends StatefulWidget {
   const HomeContent({super.key});
@@ -15,6 +16,11 @@ class _HomeContentState extends State<HomeContent>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
+  // ── User data from SharedPreferences ──────────────────────────────────
+  String _userName = '';
+  String _userCds = '';
+
+  // ... your commodity lists stay exactly the same ...
   final List<Map<String, dynamic>> _primaryCommodities = [
     {'name': 'Sugar Beans', 'currency': 'USD', 'bid': '12.30', 'ask': '11.45', 'price': '12.32', 'change': '+5.05%', 'positive': true},
     {'name': 'Maize', 'currency': 'USD', 'bid': '8.10', 'ask': '7.90', 'price': '8.15', 'change': '+2.30%', 'positive': true},
@@ -41,6 +47,10 @@ class _HomeContentState extends State<HomeContent>
   @override
   void initState() {
     super.initState();
+
+    // ── Load user data ─────────────────────────────────────────────────
+    _loadUserData();
+
     _fadeController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 400));
     _fadeAnimation =
@@ -54,6 +64,14 @@ class _HomeContentState extends State<HomeContent>
     _pulseAnimation = Tween<double>(begin: 0.85, end: 1.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+  }
+
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _userName = prefs.getString('user_name') ?? 'User';
+      _userCds  = prefs.getString('user_cds')  ?? '-';
+    });
   }
 
   @override
@@ -75,7 +93,6 @@ class _HomeContentState extends State<HomeContent>
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 110),
       children: [
-        // ── These never fade ───────────────────────────────────────
         _buildGreetingCard(),
         const SizedBox(height: 16),
         _buildQuickStats(),
@@ -84,8 +101,6 @@ class _HomeContentState extends State<HomeContent>
         const SizedBox(height: 14),
         _buildSectionLabel(),
         const SizedBox(height: 10),
-
-        // ── Only the list fades on market switch ───────────────────
         FadeTransition(
           opacity: _fadeAnimation,
           child: Column(
@@ -100,7 +115,6 @@ class _HomeContentState extends State<HomeContent>
     );
   }
 
-  // ── Greeting Card ─────────────────────────────────────────────────────
   Widget _buildGreetingCard() {
     return Container(
       padding: const EdgeInsets.all(22),
@@ -122,7 +136,6 @@ class _HomeContentState extends State<HomeContent>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Top row ───────────────────────────────────────────
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -160,9 +173,10 @@ class _HomeContentState extends State<HomeContent>
                     ],
                   ),
                   const SizedBox(height: 6),
-                  const Text(
-                    'Tafadzwa Moyo',
-                    style: TextStyle(
+                  // ── Dynamic name ──────────────────────────────
+                  Text(
+                    _userName,
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 24,
                       fontWeight: FontWeight.w900,
@@ -179,7 +193,6 @@ class _HomeContentState extends State<HomeContent>
           Container(height: 1, color: Colors.white.withOpacity(0.08)),
           const SizedBox(height: 20),
 
-          // ── Wallet row ────────────────────────────────────────
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -217,8 +230,7 @@ class _HomeContentState extends State<HomeContent>
               GestureDetector(
                 onTap: () {},
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(
                       colors: [Color(0xFF2DB144), Color(0xFF1E8E32)],
@@ -234,8 +246,7 @@ class _HomeContentState extends State<HomeContent>
                   ),
                   child: Row(
                     children: const [
-                      Icon(Icons.add_rounded,
-                          color: Colors.white, size: 16),
+                      Icon(Icons.add_rounded, color: Colors.white, size: 16),
                       SizedBox(width: 5),
                       Text(
                         'Top Up',
@@ -254,25 +265,22 @@ class _HomeContentState extends State<HomeContent>
 
           const SizedBox(height: 18),
 
-          // ── Account chip ──────────────────────────────────────
+          // ── Dynamic CDS account ───────────────────────────────
           Container(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.06),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: Colors.white.withOpacity(0.08), width: 1),
+              border: Border.all(color: Colors.white.withOpacity(0.08), width: 1),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Icon(Icons.tag_rounded,
-                    color: const Color(0xFFD4A017).withOpacity(0.8),
-                    size: 13),
+                    color: const Color(0xFFD4A017).withOpacity(0.8), size: 13),
                 const SizedBox(width: 6),
                 Text(
-                  'Account: 0/535411',
+                  'Account: $_userCds',
                   style: TextStyle(
                     color: Colors.white.withOpacity(0.5),
                     fontSize: 12,
@@ -280,13 +288,9 @@ class _HomeContentState extends State<HomeContent>
                   ),
                 ),
                 const SizedBox(width: 10),
-                Container(
-                    width: 1,
-                    height: 12,
-                    color: Colors.white.withOpacity(0.12)),
+                Container(width: 1, height: 12, color: Colors.white.withOpacity(0.12)),
                 const SizedBox(width: 10),
-                Icon(Icons.copy_rounded,
-                    color: Colors.white.withOpacity(0.3), size: 12),
+                Icon(Icons.copy_rounded, color: Colors.white.withOpacity(0.3), size: 12),
               ],
             ),
           ),
@@ -294,6 +298,8 @@ class _HomeContentState extends State<HomeContent>
       ),
     );
   }
+
+  // ── All remaining methods stay exactly the same ───────────────────────
 
   Widget _buildSunIcon() {
     return TweenAnimationBuilder<double>(
@@ -317,125 +323,53 @@ class _HomeContentState extends State<HomeContent>
             ),
           ],
         ),
-        child: const Icon(Icons.wb_sunny_rounded,
-            color: Colors.white, size: 30),
+        child: const Icon(Icons.wb_sunny_rounded, color: Colors.white, size: 30),
       ),
     );
   }
 
-  // ── Quick Stats ───────────────────────────────────────────────────────
   Widget _buildQuickStats() {
     return Row(
       children: [
-        Expanded(
-          child: _statCard(
-            icon: Icons.trending_up_rounded,
-            label: "Today's Gain",
-            value: '+\$24.50',
-            valueColor: const Color(0xFF2DB144),
-            iconBg: const Color(0xFF2DB144),
-          ),
-        ),
+        Expanded(child: _statCard(icon: Icons.trending_up_rounded, label: "Today's Gain", value: '+\$24.50', valueColor: const Color(0xFF2DB144), iconBg: const Color(0xFF2DB144))),
         const SizedBox(width: 12),
-        Expanded(
-          child: _statCard(
-            icon: Icons.swap_horiz_rounded,
-            label: 'Open Orders',
-            value: '3',
-            valueColor: const Color(0xFFD4A017),
-            iconBg: const Color(0xFFD4A017),
-          ),
-        ),
+        Expanded(child: _statCard(icon: Icons.swap_horiz_rounded, label: 'Open Orders', value: '3', valueColor: const Color(0xFFD4A017), iconBg: const Color(0xFFD4A017))),
         const SizedBox(width: 12),
-        Expanded(
-          child: _statCard(
-            icon: Icons.local_shipping_rounded,
-            label: 'Deliveries',
-            value: '2',
-            valueColor: const Color(0xFF5B8AF0),
-            iconBg: const Color(0xFF5B8AF0),
-          ),
-        ),
+        Expanded(child: _statCard(icon: Icons.local_shipping_rounded, label: 'Deliveries', value: '2', valueColor: const Color(0xFF5B8AF0), iconBg: const Color(0xFF5B8AF0))),
       ],
     );
   }
 
-  Widget _statCard({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color valueColor,
-    required Color iconBg,
-  }) {
+  Widget _statCard({required IconData icon, required String label, required String value, required Color valueColor, required Color iconBg}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.9),
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 3))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: iconBg.withOpacity(0.12),
-              borderRadius: BorderRadius.circular(9),
-            ),
-            child: Icon(icon, color: iconBg, size: 17),
-          ),
+          Container(width: 32, height: 32, decoration: BoxDecoration(color: iconBg.withOpacity(0.12), borderRadius: BorderRadius.circular(9)), child: Icon(icon, color: iconBg, size: 17)),
           const SizedBox(height: 10),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              color: valueColor,
-            ),
-          ),
+          Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: valueColor)),
           const SizedBox(height: 3),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: Colors.grey.shade500,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+          Text(label, style: TextStyle(fontSize: 10, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
         ],
       ),
     );
   }
 
-  // ── Market Toggle ─────────────────────────────────────────────────────
   Widget _buildMarketToggle() {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.85),
         borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.07),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.07), blurRadius: 12, offset: const Offset(0, 4))],
       ),
-      child: Row(
-        children: [
-          _marketTab('Primary Market', true),
-          _marketTab('Secondary Market', false),
-        ],
-      ),
+      child: Row(children: [_marketTab('Primary Market', true), _marketTab('Secondary Market', false)]),
     );
   }
 
@@ -449,266 +383,100 @@ class _HomeContentState extends State<HomeContent>
           curve: Curves.easeInOut,
           padding: const EdgeInsets.symmetric(vertical: 13),
           decoration: BoxDecoration(
-            gradient: isSelected
-                ? const LinearGradient(
-                colors: [Color(0xFF2DB144), Color(0xFF1E8E32)])
-                : null,
+            gradient: isSelected ? const LinearGradient(colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]) : null,
             color: isSelected ? null : Colors.transparent,
             borderRadius: BorderRadius.circular(14),
-            boxShadow: isSelected
-                ? [
-              BoxShadow(
-                color: const Color(0xFF2DB144).withOpacity(0.35),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              )
-            ]
-                : [],
+            boxShadow: isSelected ? [BoxShadow(color: const Color(0xFF2DB144).withOpacity(0.35), blurRadius: 10, offset: const Offset(0, 4))] : [],
           ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: isSelected ? Colors.white : const Color(0xFF888888),
-              fontSize: 13,
-              fontWeight:
-              isSelected ? FontWeight.w800 : FontWeight.w500,
-              letterSpacing: 0.2,
-            ),
-          ),
+          child: Text(label, textAlign: TextAlign.center, style: TextStyle(color: isSelected ? Colors.white : const Color(0xFF888888), fontSize: 13, fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500, letterSpacing: 0.2)),
         ),
       ),
     );
   }
 
-  // ── Section Label ─────────────────────────────────────────────────────
   Widget _buildSectionLabel() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Row(
           children: [
-            Container(
-              width: 4,
-              height: 18,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0xFF2DB144), Color(0xFF1E8E32)],
-                ),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+            Container(width: 4, height: 18, decoration: BoxDecoration(gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]), borderRadius: BorderRadius.circular(2))),
             const SizedBox(width: 10),
-            Text(
-              _isPrimaryMarket ? 'Primary Market' : 'Secondary Market',
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF1A1A1A),
-                letterSpacing: 0.2,
-              ),
-            ),
+            Text(_isPrimaryMarket ? 'Primary Market' : 'Secondary Market', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF1A1A1A), letterSpacing: 0.2)),
           ],
         ),
-        Text(
-          '${_currentCommodities.length} commodities',
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey.shade500,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
+        Text('${_currentCommodities.length} commodities', style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
       ],
     );
   }
 
-  // ── Commodity Card ────────────────────────────────────────────────────
   Widget _buildCommodityCard(Map<String, dynamic> commodity, int index) {
     final bool isPositive = commodity['positive'] as bool;
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: 200 + (index * 50)),
       curve: Curves.easeOut,
-      builder: (context, value, child) => Opacity(
-        opacity: value,
-        child: Transform.translate(
-            offset: Offset(0, 12 * (1 - value)), child: child),
-      ),
+      builder: (context, value, child) => Opacity(opacity: value, child: Transform.translate(offset: Offset(0, 12 * (1 - value)), child: child)),
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.92),
           borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.055),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.055), blurRadius: 10, offset: const Offset(0, 3))],
         ),
         child: Row(
           children: [
-            // Icon
             Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: isPositive
-                    ? const Color(0xFF2DB144).withOpacity(0.1)
-                    : const Color(0xFFE53935).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(13),
-              ),
-              child: Icon(
-                Icons.grass_rounded,
-                color: isPositive
-                    ? const Color(0xFF2DB144)
-                    : const Color(0xFFE53935),
-                size: 22,
-              ),
+              width: 44, height: 44,
+              decoration: BoxDecoration(color: isPositive ? const Color(0xFF2DB144).withOpacity(0.1) : const Color(0xFFE53935).withOpacity(0.1), borderRadius: BorderRadius.circular(13)),
+              child: Icon(Icons.grass_rounded, color: isPositive ? const Color(0xFF2DB144) : const Color(0xFFE53935), size: 22),
             ),
-
             const SizedBox(width: 12),
-
-            // Name + currency pill
             Expanded(
               flex: 3,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    commodity['name'],
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF1A1A1A),
-                    ),
-                  ),
+                  Text(commodity['name'], style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF1A1A1A))),
                   const SizedBox(height: 3),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFD4A017).withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: Text(
-                      commodity['currency'],
-                      style: const TextStyle(
-                        fontSize: 9,
-                        color: Color(0xFFD4A017),
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.3,
-                      ),
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(color: const Color(0xFFD4A017).withOpacity(0.1), borderRadius: BorderRadius.circular(5)),
+                    child: Text(commodity['currency'], style: const TextStyle(fontSize: 9, color: Color(0xFFD4A017), fontWeight: FontWeight.w700, letterSpacing: 0.3)),
                   ),
                 ],
               ),
             ),
-
-            // Bid / Ask
             Expanded(
               flex: 3,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      Text('Bid  ',
-                          style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey.shade400,
-                              fontWeight: FontWeight.w500)),
-                      Text(
-                        '\$${commodity['bid']}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF1A1A1A),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
+                  Row(children: [Text('Bid  ', style: TextStyle(fontSize: 10, color: Colors.grey.shade400, fontWeight: FontWeight.w500)), Text('\$${commodity['bid']}', style: const TextStyle(fontSize: 12, color: Color(0xFF1A1A1A), fontWeight: FontWeight.w700))]),
                   const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Text('Ask  ',
-                          style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.grey.shade400,
-                              fontWeight: FontWeight.w500)),
-                      Text(
-                        '\$${commodity['ask']}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFFD4A017),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
+                  Row(children: [Text('Ask  ', style: TextStyle(fontSize: 10, color: Colors.grey.shade400, fontWeight: FontWeight.w500)), Text('\$${commodity['ask']}', style: const TextStyle(fontSize: 12, color: Color(0xFFD4A017), fontWeight: FontWeight.w700))]),
                 ],
               ),
             ),
-
-            // Price badge
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 11, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: isPositive
-                      ? [const Color(0xFF2DB144), const Color(0xFF1E8E32)]
-                      : [const Color(0xFFE53935), const Color(0xFFC62828)],
-                ),
+                gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: isPositive ? [const Color(0xFF2DB144), const Color(0xFF1E8E32)] : [const Color(0xFFE53935), const Color(0xFFC62828)]),
                 borderRadius: BorderRadius.circular(13),
-                boxShadow: [
-                  BoxShadow(
-                    color: (isPositive
-                        ? const Color(0xFF2DB144)
-                        : const Color(0xFFE53935))
-                        .withOpacity(0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
+                boxShadow: [BoxShadow(color: (isPositive ? const Color(0xFF2DB144) : const Color(0xFFE53935)).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 3))],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(
-                    'ZiG ${commodity['price']}/kg',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
+                  Text('ZiG ${commodity['price']}/kg', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800)),
                   const SizedBox(height: 3),
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
-                        isPositive
-                            ? Icons.arrow_upward_rounded
-                            : Icons.arrow_downward_rounded,
-                        color: Colors.white,
-                        size: 10,
-                      ),
+                      Icon(isPositive ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, color: Colors.white, size: 10),
                       const SizedBox(width: 2),
-                      Text(
-                        commodity['change'],
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+                      Text(commodity['change'], style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
                     ],
                   ),
                 ],

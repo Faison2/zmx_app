@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../dashboard/dashoard.dart';
 import '../signup/signup.dart';
@@ -12,6 +15,9 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
+  bool _isLoading = false;
+  String? _errorMessage;
+
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
@@ -22,19 +28,94 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  Future<void> _handleLogin() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _errorMessage = 'Please enter your email and password.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final uri = Uri.parse(
+        'https://system.zmx.co.zw/ZMX-API/Subscriber/authuser'
+            '?idNumber=${Uri.encodeComponent(email)}'
+            '&pass=${Uri.encodeComponent(password)}',
+      );
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final body = response.body.trim();
+
+        // API returns plain "0" for wrong credentials (status is still 200)
+        if (body == '0') {
+          setState(() => _errorMessage = 'Invalid email or password. Please try again.');
+          return;
+        }
+
+        // Parse the JSON array response
+        final List<dynamic> data = jsonDecode(body);
+
+        if (data.isEmpty) {
+          setState(() => _errorMessage = 'No account found. Please try again.');
+          return;
+        }
+
+        final user = data[0] as Map<String, dynamic>;
+
+        // Save all user fields to SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('user_id',           user['id']?.toString() ?? '');
+        await prefs.setString('user_brokerName',   user['brokerName']?.toString() ?? '');
+        await prefs.setString('user_broker',       user['broker']?.toString() ?? '');
+        await prefs.setString('user_cds',          user['cds']?.toString() ?? '');
+        await prefs.setString('user_email',        user['email']?.toString() ?? '');
+        await prefs.setString('user_name',         user['name']?.toString() ?? '');
+        await prefs.setString('user_phone',        user['phone']?.toString() ?? '');
+        await prefs.setString('user_pin',          user['pin']?.toString() ?? '');
+        await prefs.setString('user_has_company',  user['has_company']?.toString() ?? '');
+        await prefs.setString('user_account_type', user['account_type']?.toString() ?? '');
+        await prefs.setBool('is_logged_in', true);
+
+        if (!mounted) return;
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DashboardScreen()),
+        );
+      } else {
+        setState(() {
+          _errorMessage = 'Server error (${response.statusCode}). Please try again.';
+        });
+      }
+    } on http.ClientException {
+      setState(() => _errorMessage = 'Network error. Check your connection.');
+    } catch (e) {
+      setState(() => _errorMessage = 'An unexpected error occurred.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Full screen background image ───────────────────────────
-          Image.asset(
-            'assets/images/splash.png',
-            fit: BoxFit.cover,
-          ),
+          // Full screen background image
+          Image.asset('assets/images/splash.png', fit: BoxFit.cover),
 
-          // ── Dark overlay ───────────────────────────────────────────
+          // Dark overlay
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -50,7 +131,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
 
-          // ── Content ────────────────────────────────────────────────
+          // Content
           SafeArea(
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -59,7 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   const SizedBox(height: 32),
 
-                  // ── Logo ───────────────────────────────────────────
+                  // Logo
                   Image.asset(
                     'assets/images/logo.png',
                     height: 110,
@@ -68,7 +149,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 48),
 
-                  // ── LOG IN title ───────────────────────────────────
+                  // LOG IN title
                   const Text(
                     'LOG IN',
                     style: TextStyle(
@@ -81,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 28),
 
-                  // ── Email field ────────────────────────────────────
+                  // Email field
                   _buildTextField(
                     controller: _emailController,
                     hint: 'Email Address',
@@ -90,7 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 16),
 
-                  // ── Password field ─────────────────────────────────
+                  // Password field
                   _buildTextField(
                     controller: _passwordController,
                     hint: 'Password',
@@ -102,13 +183,26 @@ class _LoginScreenState extends State<LoginScreen> {
                             : Icons.visibility_off,
                         color: Colors.white70,
                       ),
-                      onPressed: () {
-                        setState(() => _obscurePassword = !_obscurePassword);
-                      },
+                      onPressed: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
                     ),
                   ),
 
-                  // ── Forgot Password ────────────────────────────────
+                  // Error message
+                  if (_errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _errorMessage!,
+                      style: const TextStyle(
+                        color: Color(0xFFFF6B6B),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+
+                  // Forgot Password
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
@@ -128,27 +222,33 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   const SizedBox(height: 8),
 
-                  // ── LOGIN & SIGN UP buttons ────────────────────────
+                  // LOGIN & SIGN UP buttons
                   Row(
                     children: [
-                      // LOGIN button (yellow/amber)
+                      // LOGIN button
                       Expanded(
                         child: ElevatedButton(
-                          onPressed: () {
-                            Navigator.pushReplacement(
-                              context,
-                              MaterialPageRoute(builder: (context) => const DashboardScreen()),
-                            );
-                          },
+                          onPressed: _isLoading ? null : _handleLogin,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFD4A017),
+                            disabledBackgroundColor:
+                            const Color(0xFFD4A017).withOpacity(0.6),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(30),
                             ),
                             minimumSize: const Size(double.infinity, 54),
                             elevation: 0,
                           ),
-                          child: const Text(
+                          child: _isLoading
+                              ? const SizedBox(
+                            height: 22,
+                            width: 22,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          )
+                              : const Text(
                             'LOGIN',
                             style: TextStyle(
                               color: Colors.white,
@@ -162,17 +262,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
                       const SizedBox(width: 14),
 
-                      // SIGN UP button (green)
+                      // SIGN UP button
                       Expanded(
                         child: ElevatedButton(
-                            onPressed:
-                                () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) => const SignUpScreen()),
-                                  );
-                                },
+                          onPressed: _isLoading
+                              ? null
+                              : () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const SignUpScreen()),
+                            );
+                          },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFF2DB144),
                             shape: RoundedRectangleBorder(
@@ -215,10 +316,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(30),
-        border: Border.all(
-          color: const Color(0xFFD4A017), // golden/amber border
-          width: 1.8,
-        ),
+        border: Border.all(color: const Color(0xFFD4A017), width: 1.8),
         color: Colors.black.withOpacity(0.25),
       ),
       child: TextField(
@@ -228,15 +326,11 @@ class _LoginScreenState extends State<LoginScreen> {
         style: const TextStyle(color: Colors.white, fontSize: 15),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: TextStyle(
-            color: Colors.white.withOpacity(0.75),
-            fontSize: 15,
-          ),
+          hintStyle:
+          TextStyle(color: Colors.white.withOpacity(0.75), fontSize: 15),
           border: InputBorder.none,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 20,
-            vertical: 16,
-          ),
+          contentPadding:
+          const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           suffixIcon: suffixIcon,
         ),
       ),
