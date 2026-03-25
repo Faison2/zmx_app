@@ -30,6 +30,9 @@ class _CashContentState extends State<CashContent>
   Map<String, dynamic>? _usdBalance;
   bool _isLoadingUsd = false;
 
+  // ── Currency switch ─────────────────────────────────────────────────
+  bool _showZig = true;
+
   // ── API transactions state ───────────────────────────────────────────
   List<Map<String, dynamic>> _transactions = [];
   bool _isLoadingTransactions = false;
@@ -222,6 +225,10 @@ class _CashContentState extends State<CashContent>
 
   // ── Balance section ───────────────────────────────────────────────────
   Widget _buildBalanceSection() {
+    final isLoading = _showZig ? _isLoadingZig : _isLoadingUsd;
+    final data      = _showZig ? _zigBalance   : _usdBalance;
+    final currency  = _showZig ? 'ZiG'         : 'USD';
+
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       decoration: BoxDecoration(
@@ -238,8 +245,8 @@ class _CashContentState extends State<CashContent>
               offset: const Offset(0, 6)),
         ],
       ),
-      child: Column(children: [
-        // ── Header ─────────────────────────────────────────────────────
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Header row ────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
           child: Row(children: [
@@ -256,10 +263,7 @@ class _CashContentState extends State<CashContent>
                     letterSpacing: 0.3)),
             const Spacer(),
             GestureDetector(
-              onTap: () {
-                _fetchZigBalance();
-                _fetchUsdBalance();
-              },
+              onTap: () { _fetchZigBalance(); _fetchUsdBalance(); },
               child: Icon(Icons.refresh_rounded,
                   color: Colors.white.withOpacity(0.3), size: 16),
             ),
@@ -267,20 +271,76 @@ class _CashContentState extends State<CashContent>
         ),
         const SizedBox(height: 14),
 
-        // ── Two currency panels ─────────────────────────────────────────
-        IntrinsicHeight(
-          child: Row(children: [
-            Expanded(child: _buildBalancePanel('ZiG', _zigBalance, _isLoadingZig)),
-            Container(
-              width: 1,
-              margin: const EdgeInsets.symmetric(vertical: 10),
-              color: Colors.white.withOpacity(0.08),
+        // ── Currency toggle pill ──────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          child: Container(
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.07),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withOpacity(0.08)),
             ),
-            Expanded(child: _buildBalancePanel('USD', _usdBalance, _isLoadingUsd)),
-          ]),
+            child: Row(children: [
+              _currencyTab('ZiG', true),
+              _currencyTab('USD', false),
+            ]),
+          ),
         ),
         const SizedBox(height: 16),
+
+        // ── Single currency panel ─────────────────────────────────────
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0.05, 0),
+                end: Offset.zero,
+              ).animate(anim),
+              child: child,
+            ),
+          ),
+          child: KeyedSubtree(
+            key: ValueKey(currency),
+            child: _buildBalancePanel(currency, data, isLoading),
+          ),
+        ),
+        const SizedBox(height: 18),
       ]),
+    );
+  }
+
+  Widget _currencyTab(String label, bool isZig) {
+    final isSelected = _showZig == isZig;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _showZig = isZig),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeInOut,
+          padding: const EdgeInsets.symmetric(vertical: 9),
+          decoration: BoxDecoration(
+            gradient: isSelected
+                ? const LinearGradient(colors: [_gold, Color(0xFFB8860B)])
+                : null,
+            color: isSelected ? null : Colors.transparent,
+            borderRadius: BorderRadius.circular(9),
+            boxShadow: isSelected
+                ? [BoxShadow(color: _gold.withOpacity(0.35),
+                blurRadius: 8, offset: const Offset(0, 3))]
+                : [],
+          ),
+          child: Text(label,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.white.withOpacity(0.4),
+                  fontSize: 13,
+                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                  letterSpacing: 0.3)),
+        ),
+      ),
     );
   }
 
@@ -296,127 +356,108 @@ class _CashContentState extends State<CashContent>
 
   Widget _buildBalancePanel(
       String currency, Map<String, dynamic>? data, bool loading) {
-    final cashBal    = data?['CashBal']?.toString();
-    final virtBal    = data?['VirtCashBal']?.toString();
-    final actualBal  = data?['ActualCashBal']?.toString();
-    final totalAcct  = data?['totalAccount']?.toString();
-    final potValue   = data?['MyPotValue']?.toString();
-    final profitLoss = data?['MyProfitLoss']?.toString();
+    final prevPotValue = data?['MyPrevPotValue']?.toString();
+    final cashBal      = data?['CashBal']?.toString();
+    final virtBal      = data?['VirtCashBal']?.toString();
+    final actualBal    = data?['ActualCashBal']?.toString();
+    final totalAcct    = data?['totalAccount']?.toString();
+    final potValue     = data?['MyPotValue']?.toString();
+    final profitLoss   = data?['MyProfitLoss']?.toString();
 
-    final double? pl = profitLoss != null ? double.tryParse(profitLoss) : null;
-    final bool plPositive = (pl ?? 0) >= 0;
+    final double? pl       = profitLoss != null ? double.tryParse(profitLoss) : null;
+    final bool    plPositive = (pl ?? 0) >= 0;
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 18),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
       child: loading
           ? const SizedBox(
-          height: 120,
-          child: Center(child: CircularProgressIndicator(
-              color: _green, strokeWidth: 2)))
+          height: 80,
+          child: Center(child: CircularProgressIndicator(color: _green, strokeWidth: 2)))
           : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Currency label
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-              color: _gold.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(6)),
-          child: Text(currency,
-              style: const TextStyle(
-                  fontSize: 10, color: _gold, fontWeight: FontWeight.w800,
-                  letterSpacing: 0.5)),
-        ),
-        const SizedBox(height: 10),
-
-        // Cash Balance (main figure)
-        Text('Cash Balance',
+        // ── Main figure: MyPrevPotValue ───────────────────────────
+        Text('Cash Value',
             style: TextStyle(
                 color: Colors.white.withOpacity(0.45),
-                fontSize: 11, fontWeight: FontWeight.w500)),
-        const SizedBox(height: 4),
-        Text(_fmt(cashBal, withSign: true),
+                fontSize: 10, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 2),
+        Text(_fmt(prevPotValue, withSign: true),
             style: const TextStyle(
                 color: Colors.white,
-                fontSize: 22,
+                fontSize: 26,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 0.3)),
-        const SizedBox(height: 14),
-
-        // Sub-rows
-        _balanceDataRow('Virtual Cash', _fmt(virtBal)),
-        const SizedBox(height: 5),
-        _balanceDataRow('Actual Cash',  _fmt(actualBal, withSign: true)),
-        const SizedBox(height: 5),
-        _balanceDataRow('Pot Value',    _fmt(potValue)),
-        const SizedBox(height: 5),
-
-        // P/L row with colour
-        Row(children: [
-          Text('P / L  ',
-              style: TextStyle(
-                  fontSize: 11,
-                  color: Colors.white.withOpacity(0.45),
-                  fontWeight: FontWeight.w500)),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-                color: plPositive
-                    ? _green.withOpacity(0.18)
-                    : const Color(0xFFE53935).withOpacity(0.18),
-                borderRadius: BorderRadius.circular(6)),
-            child: Text(
-              (pl ?? 0) >= 0
-                  ? '+${_fmt(profitLoss)}'
-                  : _fmt(profitLoss, withSign: true),
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: plPositive ? _green : const Color(0xFFE53935)),
-            ),
-          ),
-        ]),
         const SizedBox(height: 10),
 
-        // Total account — highlighted
+        // ── Compact data grid ─────────────────────────────────────
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.white.withOpacity(0.08))),
-          child: Row(children: [
-            Text('Total Account',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.white.withOpacity(0.5),
-                    fontWeight: FontWeight.w500)),
-            const Spacer(),
-            Text(_fmt(totalAcct, withSign: true),
-                style: const TextStyle(
-                    fontSize: 13,
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900)),
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.white.withOpacity(0.07))),
+          child: Column(children: [
+            Row(children: [
+              _miniBalCell('Cash Bal',   _fmt(cashBal, withSign: true)),
+              _miniDivider(),
+              _miniBalCell('Virtual',    _fmt(virtBal)),
+              _miniDivider(),
+              _miniBalCell('Actual',     _fmt(actualBal, withSign: true)),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              _miniBalCell('Portfolio',  _fmt(potValue)),
+              _miniDivider(),
+              _miniBalCell('Total Acct', _fmt(totalAcct, withSign: true)),
+              _miniDivider(),
+              Expanded(
+                child: Column(children: [
+                  Text('P / L',
+                      style: TextStyle(fontSize: 9,
+                          color: Colors.white.withOpacity(0.4),
+                          fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 3),
+                  Text(
+                    (pl ?? 0) >= 0
+                        ? '+${_fmt(profitLoss)}'
+                        : _fmt(profitLoss, withSign: true),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: plPositive ? _green : _red),
+                  ),
+                ]),
+              ),
+            ]),
           ]),
         ),
       ]),
     );
   }
 
-  Widget _balanceDataRow(String label, String value) {
-    return Row(children: [
-      Text('$label  ',
-          style: TextStyle(
-              fontSize: 11,
-              color: Colors.white.withOpacity(0.45),
-              fontWeight: FontWeight.w500)),
-      const Spacer(),
-      Text(value,
-          style: const TextStyle(
-              fontSize: 11,
-              color: Colors.white,
-              fontWeight: FontWeight.w700)),
-    ]);
+  Widget _miniBalCell(String label, String value) {
+    return Expanded(
+      child: Column(children: [
+        Text(label,
+            style: TextStyle(fontSize: 9,
+                color: Colors.white.withOpacity(0.4),
+                fontWeight: FontWeight.w500)),
+        const SizedBox(height: 3),
+        Text(value,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                fontSize: 11, color: Colors.white, fontWeight: FontWeight.w700),
+            maxLines: 1, overflow: TextOverflow.ellipsis),
+      ]),
+    );
   }
+
+  Widget _miniDivider() => Container(
+      width: 1, height: 28,
+      margin: const EdgeInsets.symmetric(horizontal: 6),
+      color: Colors.white.withOpacity(0.08));
+
+
 
   // ── Action buttons ────────────────────────────────────────────────────
   Widget _buildActionButtons() {
