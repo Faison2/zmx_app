@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CashContent extends StatefulWidget {
   const CashContent({super.key});
@@ -13,26 +16,30 @@ class _CashContentState extends State<CashContent>
   late AnimationController _slideController;
   late Animation<Offset> _slideAnimation;
 
-  final List<Map<String, String>> _orders = [
-    {'commodity': 'Maize/GMBA/USD', 'type': 'BUY', 'volume': '9500', 'price': '0.393', 'value': '3733.50', 'status': 'OPEN'},
-    {'commodity': 'Wheat/GMBA/USD', 'type': 'BUY', 'volume': '7200', 'price': '0.512', 'value': '3686.40', 'status': 'OPEN'},
-    {'commodity': 'Soya/GMBA/USD', 'type': 'SELL', 'volume': '4800', 'price': '1.120', 'value': '5376.00', 'status': 'OPEN'},
-    {'commodity': 'Maize/GMBA/USD', 'type': 'BUY', 'volume': '9500', 'price': '0.393', 'value': '3733.50', 'status': 'FILLED'},
-    {'commodity': 'Cotton/GMBA/USD', 'type': 'SELL', 'volume': '3100', 'price': '2.340', 'value': '7254.00', 'status': 'OPEN'},
-    {'commodity': 'Millet/GMBA/USD', 'type': 'BUY', 'volume': '6600', 'price': '0.621', 'value': '4098.60', 'status': 'OPEN'},
-    {'commodity': 'Tobacco/GMBA/USD', 'type': 'SELL', 'volume': '2200', 'price': '4.810', 'value': '10582.00', 'status': 'FILLED'},
-  ];
+  // ── API orders state ──────────────────────────────────────────────────
+  List<Map<String, dynamic>> _orders = [];
+  bool _isLoadingOrders = false;
+  String? _ordersError;
+  String _cdsNumber = '';
 
-  final List<Map<String, String>> _transactions = [
-    {'type': 'Sell', 'desc': 'SELL ORDER', 'amount': '3733.50'},
-    {'type': 'Buy', 'desc': 'BUY ORDER', 'amount': '1820.00'},
-    {'type': 'Sell', 'desc': 'SELL ORDER', 'amount': '5376.00'},
-    {'type': 'Deposit', 'desc': 'WALLET DEPOSIT', 'amount': '500.00'},
-    {'type': 'Sell', 'desc': 'SELL ORDER', 'amount': '3733.50'},
-    {'type': 'Withdraw', 'desc': 'WITHDRAWAL', 'amount': '200.00'},
-    {'type': 'Buy', 'desc': 'BUY ORDER', 'amount': '4098.60'},
-    {'type': 'Deposit', 'desc': 'WALLET DEPOSIT', 'amount': '1000.00'},
-  ];
+  // ── Balance state (ZIG) ───────────────────────────────────────────────
+  Map<String, dynamic>? _zigBalance;
+  bool _isLoadingZig = false;
+
+  // ── Balance state (USD) ───────────────────────────────────────────────
+  Map<String, dynamic>? _usdBalance;
+  bool _isLoadingUsd = false;
+
+  // ── API transactions state ───────────────────────────────────────────
+  List<Map<String, dynamic>> _transactions = [];
+  bool _isLoadingTransactions = false;
+  String? _transactionsError;
+
+  // ── Colours ───────────────────────────────────────────────────────────
+  static const _green  = Color(0xFF2DB144);
+  static const _gold   = Color(0xFFD4A017);
+  static const _dark   = Color(0xFF1A1A1A);
+  static const _red    = Color(0xFFE53935);
 
   @override
   void initState() {
@@ -45,12 +52,147 @@ class _CashContentState extends State<CashContent>
     ).animate(CurvedAnimation(
         parent: _slideController, curve: Curves.easeOut));
     _slideController.forward();
+
+    _loadCdsAndFetchOrders();
   }
 
   @override
   void dispose() {
     _slideController.dispose();
     super.dispose();
+  }
+
+  // ── Load CDS from prefs then hit all APIs ────────────────────────────
+  Future<void> _loadCdsAndFetchOrders() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cds   = prefs.getString('user_cds') ?? '';
+    setState(() => _cdsNumber = cds);
+    await Future.wait([
+      _fetchOrders(cds),
+      _fetchZigBalance(cds),
+      _fetchUsdBalance(cds),
+      _fetchTransactions(cds),
+    ]);
+  }
+
+  // ── ZIG balance ───────────────────────────────────────────────────────
+  Future<void> _fetchZigBalance([String? cds]) async {
+    final number = cds ?? _cdsNumber;
+    if (number.isEmpty) return;
+    setState(() => _isLoadingZig = true);
+    try {
+      final uri = Uri.parse(
+        'https://system.zmx.co.zw/ZMX-API/Subscriber/getCashBalance'
+            '?cdsNumber=$number',
+      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        if (data.isNotEmpty) {
+          setState(() => _zigBalance = Map<String, dynamic>.from(data[0]));
+        }
+      }
+    } catch (_) {}
+    finally { if (mounted) setState(() => _isLoadingZig = false); }
+  }
+
+  // ── USD balance ───────────────────────────────────────────────────────
+  Future<void> _fetchUsdBalance([String? cds]) async {
+    final number = cds ?? _cdsNumber;
+    if (number.isEmpty) return;
+    setState(() => _isLoadingUsd = true);
+    try {
+      final uri = Uri.parse(
+        'https://system.zmx.co.zw/ZMX-API/Subscriber/getCashBalanceForex'
+            '?cdsNumber=$number',
+      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        if (data.isNotEmpty) {
+          setState(() => _usdBalance = Map<String, dynamic>.from(data[0]));
+        }
+      }
+    } catch (_) {}
+    finally { if (mounted) setState(() => _isLoadingUsd = false); }
+  }
+
+  Future<void> _fetchOrders([String? cds]) async {
+    final number = cds ?? _cdsNumber;
+    if (number.isEmpty) {
+      setState(() => _ordersError = 'CDS number not found');
+      return;
+    }
+
+    setState(() {
+      _isLoadingOrders = true;
+      _ordersError     = null;
+    });
+
+    try {
+      final uri = Uri.parse(
+        'https://system.zmx.co.zw/ZMX-API/Subscriber/GetOrdersByType'
+            '?cds_number=$number&type=commodity',
+      );
+
+      final response =
+      await http.get(uri).timeout(const Duration(seconds: 15));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final dynamic body = jsonDecode(response.body);
+
+        // API may return a List or a Map with a nested list
+        List<dynamic> raw = [];
+        if (body is List) {
+          raw = body;
+        } else if (body is Map && body.containsKey('data')) {
+          raw = body['data'] as List<dynamic>;
+        } else if (body is Map && body.containsKey('orders')) {
+          raw = body['orders'] as List<dynamic>;
+        }
+
+        setState(() => _orders = raw
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList());
+      } else {
+        setState(
+                () => _ordersError = 'Server error (${response.statusCode})');
+      }
+    } catch (_) {
+      if (mounted) setState(() => _ordersError = 'Failed to load orders');
+    } finally {
+      if (mounted) setState(() => _isLoadingOrders = false);
+    }
+  }
+
+  // ── Transactions ─────────────────────────────────────────────────────
+  Future<void> _fetchTransactions([String? cds]) async {
+    final number = cds ?? _cdsNumber;
+    if (number.isEmpty) return;
+    setState(() { _isLoadingTransactions = true; _transactionsError = null; });
+    try {
+      final uri = Uri.parse(
+        'https://system.zmx.co.zw/zmx_web/online.ctrade_php/getCashTransForex.php'
+            '?cdsNumber=$number',
+      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        setState(() => _transactions =
+            data.map((e) => Map<String, dynamic>.from(e as Map)).toList());
+      } else {
+        setState(() => _transactionsError = 'Server error (\${response.statusCode})');
+      }
+    } catch (_) {
+      if (mounted) setState(() => _transactionsError = 'Failed to load transactions');
+    } finally {
+      if (mounted) setState(() => _isLoadingTransactions = false);
+    }
   }
 
   void _switchTab(bool showOrders) {
@@ -60,12 +202,14 @@ class _CashContentState extends State<CashContent>
     _slideController.forward();
   }
 
+  // ══════════════════════════════════════════════════════════════════════
+  //  BUILD
+  // ══════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     return ListView(
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).padding.bottom + 90,
-      ),
+          bottom: MediaQuery.of(context).padding.bottom + 90),
       children: [
         _buildBalanceSection(),
         _buildActionButtons(),
@@ -76,93 +220,215 @@ class _CashContentState extends State<CashContent>
     );
   }
 
+  // ── Balance section ───────────────────────────────────────────────────
   Widget _buildBalanceSection() {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.92),
-        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1A1A1A), Color(0xFF2C2C2C)],
+        ),
+        borderRadius: BorderRadius.circular(22),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withOpacity(0.07),
-              blurRadius: 14,
-              offset: const Offset(0, 4)),
+              color: Colors.black.withOpacity(0.18),
+              blurRadius: 20,
+              offset: const Offset(0, 6)),
         ],
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          children: [
-            Expanded(child: _buildBalanceColumn('ZiG', '1500.00', '1700.00', '2300.00')),
-            VerticalDivider(
-                color: Colors.grey.shade300,
-                thickness: 1,
-                indent: 16,
-                endIndent: 16),
-            Expanded(child: _buildBalanceColumn('USD', '150.00', '180.00', '220.00')),
-          ],
+      child: Column(children: [
+        // ── Header ─────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
+          child: Row(children: [
+            Container(
+              width: 7, height: 7,
+              decoration: const BoxDecoration(color: _green, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 7),
+            Text('Account Balance',
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.55),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.3)),
+            const Spacer(),
+            GestureDetector(
+              onTap: () {
+                _fetchZigBalance();
+                _fetchUsdBalance();
+              },
+              child: Icon(Icons.refresh_rounded,
+                  color: Colors.white.withOpacity(0.3), size: 16),
+            ),
+          ]),
         ),
-      ),
+        const SizedBox(height: 14),
+
+        // ── Two currency panels ─────────────────────────────────────────
+        IntrinsicHeight(
+          child: Row(children: [
+            Expanded(child: _buildBalancePanel('ZiG', _zigBalance, _isLoadingZig)),
+            Container(
+              width: 1,
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              color: Colors.white.withOpacity(0.08),
+            ),
+            Expanded(child: _buildBalancePanel('USD', _usdBalance, _isLoadingUsd)),
+          ]),
+        ),
+        const SizedBox(height: 16),
+      ]),
     );
   }
 
-  Widget _buildBalanceColumn(
-      String currency, String cleared, String uncleared, String total) {
+  // ── Helper: format a balance string, handle null/loading ─────────────
+  String _fmt(String? raw, {bool withSign = false}) {
+    if (raw == null) return '—';
+    final d = double.tryParse(raw);
+    if (d == null) return raw;
+    final s = d.abs().toStringAsFixed(2);
+    if (withSign && d < 0) return '-$s';
+    return s;
+  }
+
+  Widget _buildBalancePanel(
+      String currency, Map<String, dynamic>? data, bool loading) {
+    final cashBal    = data?['CashBal']?.toString();
+    final virtBal    = data?['VirtCashBal']?.toString();
+    final actualBal  = data?['ActualCashBal']?.toString();
+    final totalAcct  = data?['totalAccount']?.toString();
+    final potValue   = data?['MyPotValue']?.toString();
+    final profitLoss = data?['MyProfitLoss']?.toString();
+
+    final double? pl = profitLoss != null ? double.tryParse(profitLoss) : null;
+    final bool plPositive = (pl ?? 0) >= 0;
+
     return Padding(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Cleared Cash:',
-              style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w500)),
-          const SizedBox(height: 6),
-          Text('$currency $cleared',
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      child: loading
+          ? const SizedBox(
+          height: 120,
+          child: Center(child: CircularProgressIndicator(
+              color: _green, strokeWidth: 2)))
+          : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Currency label
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+              color: _gold.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(6)),
+          child: Text(currency,
               style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF1A1A1A))),
-          const SizedBox(height: 12),
-          _balanceRow('Uncleared Cash:', '$currency $uncleared'),
-          const SizedBox(height: 6),
-          _balanceRow('Total Account:', '$currency $total'),
-        ],
-      ),
-    );
-  }
+                  fontSize: 10, color: _gold, fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5)),
+        ),
+        const SizedBox(height: 10),
 
-  Widget _balanceRow(String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
-        const SizedBox(width: 4),
-        Flexible(
-          child: Text(value,
-              style: const TextStyle(
+        // Cash Balance (main figure)
+        Text('Cash Balance',
+            style: TextStyle(
+                color: Colors.white.withOpacity(0.45),
+                fontSize: 11, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 4),
+        Text(_fmt(cashBal, withSign: true),
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.3)),
+        const SizedBox(height: 14),
+
+        // Sub-rows
+        _balanceDataRow('Virtual Cash', _fmt(virtBal)),
+        const SizedBox(height: 5),
+        _balanceDataRow('Actual Cash',  _fmt(actualBal, withSign: true)),
+        const SizedBox(height: 5),
+        _balanceDataRow('Pot Value',    _fmt(potValue)),
+        const SizedBox(height: 5),
+
+        // P/L row with colour
+        Row(children: [
+          Text('P / L  ',
+              style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.white.withOpacity(0.45),
+                  fontWeight: FontWeight.w500)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+                color: plPositive
+                    ? _green.withOpacity(0.18)
+                    : const Color(0xFFE53935).withOpacity(0.18),
+                borderRadius: BorderRadius.circular(6)),
+            child: Text(
+              (pl ?? 0) >= 0
+                  ? '+${_fmt(profitLoss)}'
+                  : _fmt(profitLoss, withSign: true),
+              style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
-                  color: Color(0xFF1A1A1A))),
+                  color: plPositive ? _green : const Color(0xFFE53935)),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 10),
+
+        // Total account — highlighted
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.white.withOpacity(0.08))),
+          child: Row(children: [
+            Text('Total Account',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white.withOpacity(0.5),
+                    fontWeight: FontWeight.w500)),
+            const Spacer(),
+            Text(_fmt(totalAcct, withSign: true),
+                style: const TextStyle(
+                    fontSize: 13,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900)),
+          ]),
         ),
-      ],
+      ]),
     );
   }
 
+  Widget _balanceDataRow(String label, String value) {
+    return Row(children: [
+      Text('$label  ',
+          style: TextStyle(
+              fontSize: 11,
+              color: Colors.white.withOpacity(0.45),
+              fontWeight: FontWeight.w500)),
+      const Spacer(),
+      Text(value,
+          style: const TextStyle(
+              fontSize: 11,
+              color: Colors.white,
+              fontWeight: FontWeight.w700)),
+    ]);
+  }
+
+  // ── Action buttons ────────────────────────────────────────────────────
   Widget _buildActionButtons() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Row(
-        children: [
-          _actionButton('+ Deposit', const Color(0xFF2DB144), Colors.white),
-          const SizedBox(width: 10),
-          _actionButton('- Withdraw', const Color(0xFFD4A017), Colors.white),
-          const SizedBox(width: 10),
-          _actionButton('Pledges', Colors.white, const Color(0xFFD4A017),
-              borderColor: const Color(0xFFD4A017)),
-        ],
-      ),
+      child: Row(children: [
+        _actionButton('+ Deposit',  _green,       Colors.white),
+        const SizedBox(width: 10),
+        _actionButton('- Withdraw', _gold,        Colors.white),
+        const SizedBox(width: 10),
+        _actionButton('Pledges',    Colors.white, _gold, borderColor: _gold),
+      ]),
     );
   }
 
@@ -200,6 +466,7 @@ class _CashContentState extends State<CashContent>
     );
   }
 
+  // ── Tab toggle ────────────────────────────────────────────────────────
   Widget _buildTabToggle() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -214,12 +481,10 @@ class _CashContentState extends State<CashContent>
                 offset: const Offset(0, 3)),
           ],
         ),
-        child: Row(
-          children: [
-            _tabButton('Orders', true),
-            _tabButton('Transactions', false),
-          ],
-        ),
+        child: Row(children: [
+          _tabButton('My Orders',    true),   // ← renamed
+          _tabButton('Transactions', false),
+        ]),
       ),
     );
   }
@@ -233,10 +498,11 @@ class _CashContentState extends State<CashContent>
           duration: const Duration(milliseconds: 300),
           padding: const EdgeInsets.symmetric(vertical: 14),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF1A1A1A) : Colors.transparent,
+            color: isSelected ? _dark : Colors.transparent,
             borderRadius: BorderRadius.circular(14),
             boxShadow: isSelected
-                ? [BoxShadow(color: Colors.black.withOpacity(0.25), blurRadius: 10, offset: const Offset(0, 4))]
+                ? [BoxShadow(color: Colors.black.withOpacity(0.25),
+                blurRadius: 10, offset: const Offset(0, 4))]
                 : [],
           ),
           child: Text(label,
@@ -250,6 +516,7 @@ class _CashContentState extends State<CashContent>
     );
   }
 
+  // ── List container ────────────────────────────────────────────────────
   Widget _buildListSection() {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -257,12 +524,12 @@ class _CashContentState extends State<CashContent>
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFFD4A017), Color(0xFFB8890F)],
+          colors: [_gold, Color(0xFFB8890F)],
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-              color: const Color(0xFFD4A017).withOpacity(0.3),
+              color: _gold.withOpacity(0.3),
               blurRadius: 16,
               offset: const Offset(0, 6)),
         ],
@@ -273,158 +540,329 @@ class _CashContentState extends State<CashContent>
           position: _slideAnimation,
           child: Padding(
             padding: const EdgeInsets.only(bottom: 10),
-            child: Column(
-              children: _showOrders
-                  ? _orders.map(_buildOrderCard).toList()
-                  : _transactions.map(_buildTransactionCard).toList(),
-            ),
+            child: _showOrders ? _buildOrdersBody() : _buildTransactionsList(),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildOrderCard(Map<String, String> order) {
-    final isBuy = order['type'] == 'BUY';
-    final isFilled = order['status'] == 'FILLED';
+  // ── Orders body: loading / error / empty / list ───────────────────────
+  Widget _buildOrdersBody() {
+    if (_isLoadingOrders) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 48),
+        child: Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+    }
+
+    if (_ordersError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32),
+        child: Column(children: [
+          const Icon(Icons.wifi_off_rounded, color: Colors.white70, size: 40),
+          const SizedBox(height: 10),
+          Text(_ordersError!,
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 14),
+          GestureDetector(
+            onTap: () => _fetchOrders(),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white38),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.refresh_rounded, color: Colors.white, size: 16),
+                SizedBox(width: 6),
+                Text('Retry', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              ]),
+            ),
+          ),
+        ]),
+      );
+    }
+
+    if (_orders.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 36),
+        child: Center(
+          child: Text('No orders found',
+              style: TextStyle(color: Colors.white70, fontSize: 14)),
+        ),
+      );
+    }
+
+    return Column(children: _orders.map(_buildOrderCard).toList());
+  }
+
+  // ── Single order card built from API response ─────────────────────────
+  Widget _buildOrderCard(Map<String, dynamic> order) {
+    final commodity   = order['fullname']?.toString()     ?? '—';
+    final type        = (order['type']?.toString()        ?? '').toUpperCase();
+    final volume      = order['volume']?.toString()       ?? '—';
+    final price       = order['price']?.toString()        ?? '—';
+    final orderNumber = order['ordernumber']?.toString()  ?? '—';
+    final date        = order['date']?.toString()         ?? '';
+    final status      = (order['status']?.toString()      ?? '').toUpperCase();
+    final source      = order['source']?.toString()       ?? '';
+
+    // Compute a display value (volume × price)
+    final double vol  = double.tryParse(volume) ?? 0;
+    final double prc  = double.tryParse(price)  ?? 0;
+    final String value = (vol * prc).toStringAsFixed(2);
+
+    final isBuy       = type == 'BUY';
+    final isCancelled = status == 'CANCELLED';
+    final isFilled    = status == 'FILLED';
+
+    // Badge colour: green=FILLED, gold=OPEN, grey=CANCELLED
+    final Color badgeColor = isFilled
+        ? _green
+        : isCancelled
+        ? Colors.grey.shade500
+        : _gold;
+
     return Container(
       margin: const EdgeInsets.fromLTRB(10, 10, 10, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.95),
           borderRadius: BorderRadius.circular(14)),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 4,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(order['commodity']!,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF1A1A1A))),
-                const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: isBuy
-                        ? const Color(0xFF2DB144).withOpacity(0.12)
-                        : const Color(0xFFE53935).withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text('Type: ${order['type']}',
-                      style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: isBuy
-                              ? const Color(0xFF2DB144)
-                              : const Color(0xFFE53935))),
-                ),
-              ],
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // ── Row 1: commodity name + status badge ──────────────────────
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(commodity,
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w800, color: _dark),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
-          ),
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Volume: ${order['volume']}',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
-                const SizedBox(height: 3),
-                Text('Price: ${order['price']}',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
-              ],
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              decoration: BoxDecoration(
+                  color: badgeColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: badgeColor.withOpacity(0.4))),
+              child: Text(status,
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: badgeColor,
+                      letterSpacing: 0.4)),
             ),
-          ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // ── Row 2: type badge | order number | date ───────────────────
+        Row(children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
             decoration: BoxDecoration(
-              color: isFilled ? const Color(0xFF1A1A1A) : const Color(0xFFD4A017),
-              borderRadius: BorderRadius.circular(10),
+              color: isBuy ? _green.withOpacity(0.12) : _red.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(6),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text('Value: ${order['value']}',
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 3),
-                Text('Status: ${order['status']}',
-                    style: TextStyle(
-                        color: Colors.white.withOpacity(0.88),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600)),
-              ],
-            ),
+            child: Text(type,
+                style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: isBuy ? _green : _red)),
           ),
-        ],
-      ),
+          const SizedBox(width: 8),
+          Text(orderNumber,
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade500,
+                  fontWeight: FontWeight.w600)),
+          const Spacer(),
+          if (date.isNotEmpty)
+            Row(children: [
+              Icon(Icons.calendar_today_rounded,
+                  size: 10, color: Colors.grey.shade400),
+              const SizedBox(width: 3),
+              Text(date,
+                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+            ]),
+        ]),
+        const SizedBox(height: 10),
+
+        // ── Row 3: volume | price | value ─────────────────────────────
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(10)),
+          child: Row(children: [
+            _orderStat('Volume', volume),
+            _vDivider(),
+            _orderStat('Price', '\$$price'),
+            _vDivider(),
+            _orderStat('Value', '\$$value', highlight: true),
+            if (source.isNotEmpty) ...[
+              _vDivider(),
+              _orderStat('Source', source),
+            ],
+          ]),
+        ),
+      ]),
     );
   }
 
-  Widget _buildTransactionCard(Map<String, String> tx) {
-    final isCredit = tx['type'] == 'Sell' || tx['type'] == 'Deposit';
+  Widget _orderStat(String label, String value, {bool highlight = false}) {
+    return Expanded(
+      child: Column(children: [
+        Text(label,
+            style: TextStyle(fontSize: 9, color: Colors.grey.shade500,
+                fontWeight: FontWeight.w500)),
+        const SizedBox(height: 3),
+        Text(value,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: highlight ? _gold : _dark),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis),
+      ]),
+    );
+  }
+
+  Widget _vDivider() => Container(
+      width: 1, height: 28, margin: const EdgeInsets.symmetric(horizontal: 6),
+      color: Colors.grey.shade200);
+
+  // ── Transactions list ────────────────────────────────────────────────
+  Widget _buildTransactionsList() {
+    if (_isLoadingTransactions) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 48),
+        child: Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+    }
+    if (_transactionsError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32),
+        child: Column(children: [
+          const Icon(Icons.wifi_off_rounded, color: Colors.white70, size: 40),
+          const SizedBox(height: 10),
+          Text(_transactionsError!,
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 14),
+          GestureDetector(
+            onTap: () => _fetchTransactions(),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white38),
+              ),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.refresh_rounded, color: Colors.white, size: 16),
+                SizedBox(width: 6),
+                Text('Retry', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              ]),
+            ),
+          ),
+        ]),
+      );
+    }
+    if (_transactions.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 36),
+        child: Center(
+          child: Text('No transactions found',
+              style: TextStyle(color: Colors.white70, fontSize: 14)),
+        ),
+      );
+    }
+    return Column(children: _transactions.map(_buildTransactionCard).toList());
+  }
+
+  Widget _buildTransactionCard(Map<String, dynamic> tx) {
+    final type   = tx['type']?.toString()    ?? '';
+    final desc   = tx['desc']?.toString()    ?? '';
+    final date   = tx['date']?.toString()    ?? '';
+    final rawAmt = tx['ammount']?.toString() ?? '0'; // API uses 'ammount' (typo)
+
+    final double amount   = double.tryParse(rawAmt) ?? 0;
+    final bool   isCredit = amount >= 0;
+    final String amtDisplay = isCredit
+        ? '+${amount.toStringAsFixed(2)}'
+        : amount.toStringAsFixed(2);
+
+    final Color   iconColor = isCredit ? _green : _red;
+    final IconData icon     = isCredit
+        ? Icons.arrow_downward_rounded
+        : Icons.arrow_upward_rounded;
+
     return Container(
       margin: const EdgeInsets.fromLTRB(10, 10, 10, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
       decoration: BoxDecoration(
           color: Colors.white.withOpacity(0.95),
           borderRadius: BorderRadius.circular(14)),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: isCredit
-                  ? const Color(0xFF2DB144).withOpacity(0.1)
-                  : const Color(0xFFE53935).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(
-              isCredit ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
-              color: isCredit ? const Color(0xFF2DB144) : const Color(0xFFE53935),
-              size: 18,
-            ),
+      child: Row(children: [
+        // Icon bubble
+        Container(
+          width: 40, height: 40,
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Type: ${tx['type']}',
-                    style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF1A1A1A))),
-                const SizedBox(height: 3),
-                Text('Desc: ${tx['desc']}',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+          child: Icon(icon, color: iconColor, size: 18),
+        ),
+        const SizedBox(width: 12),
+
+        // Desc + type badge + date
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(desc,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _dark),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 4),
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                    color: _gold.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(5)),
+                child: Text(type,
+                    style: const TextStyle(fontSize: 9, color: _gold,
+                        fontWeight: FontWeight.w700)),
+              ),
+              if (date.isNotEmpty) ...[
+                const SizedBox(width: 6),
+                Icon(Icons.calendar_today_rounded,
+                    size: 9, color: Colors.grey.shade400),
+                const SizedBox(width: 3),
+                Text(date,
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
               ],
-            ),
+            ]),
+          ]),
+        ),
+
+        // Amount badge — green if credit, red if debit
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+          decoration: BoxDecoration(
+            color: iconColor,
+            borderRadius: BorderRadius.circular(11),
+            boxShadow: [BoxShadow(
+                color: iconColor.withOpacity(0.3),
+                blurRadius: 6,
+                offset: const Offset(0, 2))],
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFD4A017),
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: [
-                BoxShadow(
-                    color: const Color(0xFFD4A017).withOpacity(0.3),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2))
-              ],
-            ),
-            child: Text('Amount: ${tx['amount']}',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800)),
-          ),
-        ],
-      ),
+          child: Text(amtDisplay,
+              style: const TextStyle(
+                  color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
+        ),
+      ]),
     );
   }
 }
