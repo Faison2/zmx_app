@@ -783,11 +783,12 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
   final _bidYieldController = TextEditingController();
   final _quantityController = TextEditingController();
 
-  String _brokerCode  = '';
-  String _brokerName  = '';
-  String _clientCode  = '';
-  String _clientName  = '';
-  String _submittedBy = '';
+  // ── FIX: default fallback values so broker is never empty ────────────────
+  String _brokerCode  = 'DEFAULT';
+  String _brokerName  = 'Default Broker';
+  String _clientCode  = 'DEFAULT';
+  String _clientName  = 'Default Client';
+  String _submittedBy = 'DEFAULT';
 
   @override
   void initState() { super.initState(); _loadUserPrefs(); }
@@ -796,11 +797,12 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
       setState(() {
-        _brokerCode  = prefs.getString('user_broker')     ?? '';
-        _brokerName  = prefs.getString('user_brokerName') ?? '';
-        _clientCode  = prefs.getString('user_cds')        ?? '';
-        _clientName  = prefs.getString('user_name')       ?? '';
-        _submittedBy = prefs.getString('user_broker')     ?? '';
+        // ── FIX: fall back to defaults when SharedPreferences has nothing ──
+        _brokerCode  = prefs.getString('user_broker')     ?? 'DEFAULT';
+        _brokerName  = prefs.getString('user_brokerName') ?? 'Default Broker';
+        _clientCode  = prefs.getString('user_cds')        ?? 'DEFAULT';
+        _clientName  = prefs.getString('user_name')       ?? 'Default Client';
+        _submittedBy = prefs.getString('user_broker')     ?? 'DEFAULT';
       });
     }
   }
@@ -825,7 +827,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     final stamp =
         '${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}'
         '-${now.hour.toString().padLeft(2,'0')}${now.minute.toString().padLeft(2,'0')}${now.second.toString().padLeft(2,'0')}';
-    return 'BID-$stamp-${_brokerCode.isNotEmpty ? _brokerCode : "SYS"}';
+    return 'BID-$stamp-$_brokerCode';
   }
 
   Future<void> _submitBid() async {
@@ -837,10 +839,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
       setState(() => _submitError = 'Please enter a valid quantity.');
       return;
     }
-    if (_brokerCode.isEmpty) {
-      setState(() => _submitError = 'Broker info not found. Please log in again.');
-      return;
-    }
+    // ── FIX: removed the empty-broker guard that was blocking submission ──
     setState(() { _isSubmitting = true; _submitError = null; });
     try {
       await AuctionService.placeBid(
@@ -1246,7 +1245,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
   @override
   void initState() {
     super.initState();
-    // Two tabs for closed auctions (Info | Results), one tab otherwise
     _tabController = TabController(
         length: _isClosed ? 2 : 1, vsync: this);
     if (_isClosed) _loadResults();
@@ -1284,7 +1282,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
       backgroundColor: const Color(0xFF141414),
       body: SafeArea(
         child: Column(children: [
-          // ── Top bar ──────────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: Row(children: [
@@ -1310,7 +1307,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
             ]),
           ),
 
-          // ── Tab bar (only shown for closed auctions) ──────────────────
           if (_isClosed) ...[
             const SizedBox(height: 14),
             Padding(
@@ -1349,7 +1345,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
           ] else
             const SizedBox(height: 14),
 
-          // ── Content ───────────────────────────────────────────────────
           Expanded(
             child: _isClosed
                 ? TabBarView(
@@ -1366,7 +1361,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     );
   }
 
-  // ── Information Tab ────────────────────────────────────────────────────────
   Widget _buildInfoTab(AuctionModel auction) {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -1478,7 +1472,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     );
   }
 
-  // ── Results Tab — completely distinct visual design ──────────────────────
   Widget _buildResultsTab() {
     if (_loadingResult) {
       return const Center(child: Column(
@@ -1548,7 +1541,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
 
     final r = _result!;
 
-    // Price band: how cutoff sits between low and high
     final priceRange = r.highestBidPrice - r.lowestBidPrice;
     final cutoffFraction = priceRange > 0
         ? ((r.cutoffPrice - r.lowestBidPrice) / priceRange).clamp(0.0, 1.0)
@@ -1561,7 +1553,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
       children: [
 
-        // ── Published badge + date ──────────────────────────────────────
         Row(children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
@@ -1610,7 +1601,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
 
         const SizedBox(height: 18),
 
-        // ── Hero metrics row ─────────────────────────────────────────────
         Row(children: [
           _heroTile(
             label: 'TOTAL BIDS',
@@ -1651,7 +1641,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
 
         const SizedBox(height: 22),
 
-        // ── Price band visualiser ────────────────────────────────────────
         _sectionHeader('PRICE RANGE ANALYSIS'),
         const SizedBox(height: 12),
         Container(
@@ -1662,7 +1651,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
             border: Border.all(color: Colors.white.withOpacity(0.07)),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Low / High labels
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               _priceLabel('LOW', r.fmtLowestBidPrice, Colors.redAccent),
               _priceLabel('HIGH', r.fmtHighestBidPrice, const Color(0xFF2DB144),
@@ -1670,11 +1658,9 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
             ]),
             const SizedBox(height: 10),
 
-            // Track
             LayoutBuilder(builder: (ctx, box) {
               final w = box.maxWidth;
               return Stack(clipBehavior: Clip.none, children: [
-                // Background track
                 Container(
                   height: 8,
                   decoration: BoxDecoration(
@@ -1682,7 +1668,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
                     borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-                // Filled portion up to cutoff
                 Container(
                   height: 8,
                   width: w * cutoffFraction,
@@ -1692,7 +1677,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
                     borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-                // Avg marker
                 Positioned(
                   left: (w * avgFraction) - 1,
                   top: -4,
@@ -1704,7 +1688,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
                     ),
                   ),
                 ),
-                // Cutoff diamond
                 Positioned(
                   left: (w * cutoffFraction) - 7,
                   top: -6,
@@ -1723,7 +1706,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
               ]);
             }),
             const SizedBox(height: 16),
-            // Legend
             Row(children: [
               _legendDot(const Color(0xFF2DB144)), const SizedBox(width: 5),
               Text('Fill', style: _legendStyle()),
@@ -1739,21 +1721,18 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
             Divider(color: Colors.white.withOpacity(0.07), height: 1),
             const SizedBox(height: 14),
 
-            // Three price columns
             Row(children: [
               _priceColumn('AVERAGE', r.fmtAverageBidPrice, Colors.blueAccent),
               _priceColDivider(),
               _priceColumn('CUTOFF', r.fmtCutoffPrice, const Color(0xFFD4A017)),
               _priceColDivider(),
-              _priceColumn('UNIFORM',
-                  r.fmtUniformPrice, Colors.purpleAccent),
+              _priceColumn('UNIFORM', r.fmtUniformPrice, Colors.purpleAccent),
             ]),
           ]),
         ),
 
         const SizedBox(height: 22),
 
-        // ── Allocation stats ─────────────────────────────────────────────
         _sectionHeader('ALLOCATION'),
         const SizedBox(height: 12),
         Row(children: [
@@ -1766,7 +1745,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
 
         const SizedBox(height: 22),
 
-        // ── Settlement banner ────────────────────────────────────────────
         _sectionHeader('SETTLEMENT'),
         const SizedBox(height: 12),
         Container(
@@ -1835,7 +1813,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     );
   }
 
-  // ── Results Tab helpers ──────────────────────────────────────────────────
   Widget _heroTile({
     required String label,
     required String value,
@@ -1941,7 +1918,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     } catch (_) { return iso; }
   }
 
-  // ── Shared detail-card helpers ───────────────────────────────────────────
   Widget _detailCard({
     required String title,
     required List<Widget> rows,
