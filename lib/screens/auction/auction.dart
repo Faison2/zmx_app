@@ -274,11 +274,23 @@ class AuctionService {
     throw Exception('Failed to load results (${response.statusCode})');
   }
 
+  // ── UPDATED: new endpoint + lean body, submittedBy hardcoded to 'mobile' ──
   static Future<void> placeBid({
-    required int auctionId,
-    required Map<String, dynamic> body,
+    required String? lotNumber,
+    required double bidPrice,
+    required int bidQuantity,
+    required String clientCode,
+    required String clientName,
   }) async {
-    final uri = Uri.parse('$_baseUrl/v1/auction/$auctionId/bids');
+    final uri = Uri.parse('$_baseUrl/v1/auction/bids');
+    final body = <String, dynamic>{
+      'bidPrice':    bidPrice,
+      'bidQuantity': bidQuantity,
+      'clientCode':  clientCode,
+      'clientName':  clientName,
+      'submittedBy': 'mobile',
+      if (lotNumber != null) 'lotNumber': lotNumber,
+    };
     final response = await http.post(
       uri,
       headers: {'Content-Type': 'application/json'},
@@ -774,21 +786,15 @@ class _PlaceBidSheet extends StatefulWidget {
 }
 
 class _PlaceBidSheetState extends State<_PlaceBidSheet> {
-  bool _isCompetitive  = true;
-  bool _isSubmitting   = false;
-  bool _submitSuccess  = false;
+  bool _isSubmitting  = false;
+  bool _submitSuccess = false;
   String? _submitError;
 
   final _bidPriceController = TextEditingController();
-  final _bidYieldController = TextEditingController();
   final _quantityController = TextEditingController();
 
-  // ── FIX: default fallback values so broker is never empty ────────────────
-  String _brokerCode  = 'DEFAULT';
-  String _brokerName  = 'Default Broker';
-  String _clientCode  = 'DEFAULT';
-  String _clientName  = 'Default Client';
-  String _submittedBy = 'DEFAULT';
+  String _clientCode = 'DEFAULT';
+  String _clientName = 'Default Client';
 
   @override
   void initState() { super.initState(); _loadUserPrefs(); }
@@ -797,12 +803,8 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     final prefs = await SharedPreferences.getInstance();
     if (mounted) {
       setState(() {
-        // ── FIX: fall back to defaults when SharedPreferences has nothing ──
-        _brokerCode  = prefs.getString('user_broker')     ?? 'DEFAULT';
-        _brokerName  = prefs.getString('user_brokerName') ?? 'Default Broker';
-        _clientCode  = prefs.getString('user_cds')        ?? 'DEFAULT';
-        _clientName  = prefs.getString('user_name')       ?? 'Default Client';
-        _submittedBy = prefs.getString('user_broker')     ?? 'DEFAULT';
+        _clientCode = prefs.getString('user_cds')  ?? 'DEFAULT';
+        _clientName = prefs.getString('user_name') ?? 'Default Client';
       });
     }
   }
@@ -810,26 +812,17 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
   @override
   void dispose() {
     _bidPriceController.dispose();
-    _bidYieldController.dispose();
     _quantityController.dispose();
     super.dispose();
   }
 
-  double get _price    => double.tryParse(_bidPriceController.text)  ?? 0;
-  double get _quantity => double.tryParse(_quantityController.text)  ?? 0;
-  double get _yield    => double.tryParse(_bidYieldController.text)  ?? 0;
+  double get _price    => double.tryParse(_bidPriceController.text) ?? 0;
+  double get _quantity => double.tryParse(_quantityController.text) ?? 0;
   double get _amount   => (_price > 0 && _quantity > 0) ? _price * _quantity : 0;
   String get _displayAmount =>
       _amount > 0 ? '\$${_amount.toStringAsFixed(2)}' : 'Auto-calculated';
 
-  String _generateBidRef() {
-    final now = DateTime.now();
-    final stamp =
-        '${now.year}${now.month.toString().padLeft(2,'0')}${now.day.toString().padLeft(2,'0')}'
-        '-${now.hour.toString().padLeft(2,'0')}${now.minute.toString().padLeft(2,'0')}${now.second.toString().padLeft(2,'0')}';
-    return 'BID-$stamp-$_brokerCode';
-  }
-
+  // ── UPDATED: uses new AuctionService.placeBid signature ──────────────────
   Future<void> _submitBid() async {
     if (_price <= 0) {
       setState(() => _submitError = 'Please enter a valid bid price.');
@@ -839,24 +832,14 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
       setState(() => _submitError = 'Please enter a valid quantity.');
       return;
     }
-    // ── FIX: removed the empty-broker guard that was blocking submission ──
     setState(() { _isSubmitting = true; _submitError = null; });
     try {
       await AuctionService.placeBid(
-        auctionId: widget.auction.auctionId,
-        body: {
-          'bidReference': _generateBidRef(),
-          'brokerCode':   _brokerCode,
-          'brokerName':   _brokerName,
-          'clientCode':   _clientCode,
-          'clientName':   _clientName,
-          'bidType':      _isCompetitive ? 'COMPETITIVE' : 'NON_COMPETITIVE',
-          'bidPrice':     _price,
-          'bidYield':     _yield,
-          'bidQuantity':  _quantity.toInt(),
-          'bidAmount':    _amount,
-          'submittedBy':  _submittedBy,
-        },
+        lotNumber:   widget.auction.lotNumber,
+        bidPrice:    _price,
+        bidQuantity: _quantity.toInt(),
+        clientCode:  _clientCode,
+        clientName:  _clientName,
       );
       if (mounted) setState(() { _isSubmitting = false; _submitSuccess = true; });
     } catch (e) {
@@ -966,6 +949,11 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                 Text('Reserve: ${auction.formattedReservePrice}  |  Volume: ${auction.formattedTotalVolume}',
                     style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.55))),
               ],
+              if (auction.lotNumber != null) ...[
+                const SizedBox(height: 4),
+                Text('Lot: ${auction.lotNumber}',
+                    style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.55))),
+              ],
               if (auction.currentHighestBid != null) ...[
                 const SizedBox(height: 10),
                 Container(
@@ -985,7 +973,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
           const SizedBox(height: 20),
 
-          _sectionLabel('BROKER / CLIENT'),
+          _sectionLabel('CLIENT'),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(14),
@@ -994,28 +982,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.white.withOpacity(0.1)),
             ),
-            child: Column(children: [
-              _infoRow('Broker',
-                  '$_brokerCode${_brokerName.isNotEmpty ? " · $_brokerName" : ""}'),
-              const SizedBox(height: 6),
-              _infoRow('Client',
-                  '$_clientCode${_clientName.isNotEmpty ? " · $_clientName" : ""}'),
-            ]),
-          ),
-
-          const SizedBox(height: 18),
-          _sectionLabel('BID TYPE'),
-          const SizedBox(height: 10),
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.06),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.white.withOpacity(0.1)),
-            ),
-            child: Row(children: [
-              _bidTypeTab('Competitive', true),
-              _bidTypeTab('Non-Competitive', false),
-            ]),
+            child: _infoRow('Client', '$_clientCode · $_clientName'),
           ),
 
           const SizedBox(height: 18),
@@ -1027,18 +994,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             onChanged: (_) => setState(() {}),
           ),
-
-          if (!auction.isCommodityAuction) ...[
-            const SizedBox(height: 18),
-            _sectionLabel('BID YIELD (%)'),
-            const SizedBox(height: 8),
-            _darkTextField(
-              controller: _bidYieldController,
-              hint: 'Enter bid yield',
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              onChanged: (_) => setState(() {}),
-            ),
-          ],
 
           const SizedBox(height: 18),
           _sectionLabel(auction.isCommodityAuction ? 'QUANTITY (TONNES)' : 'QUANTITY'),
@@ -1189,36 +1144,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
           ),
         ),
       );
-
-  Widget _bidTypeTab(String label, bool isCompetitive) {
-    final isSelected = _isCompetitive == isCompetitive;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => _isCompetitive = isCompetitive),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          padding: const EdgeInsets.symmetric(vertical: 13),
-          decoration: BoxDecoration(
-            gradient: isSelected
-                ? const LinearGradient(
-                colors: [Color(0xFF2DB144), Color(0xFF1E8E32)])
-                : null,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: isSelected
-                ? [BoxShadow(color: const Color(0xFF2DB144).withOpacity(0.3),
-                blurRadius: 8, offset: const Offset(0, 3))]
-                : [],
-          ),
-          child: Text(label, textAlign: TextAlign.center,
-              style: TextStyle(
-                color: isSelected ? Colors.white : Colors.white.withOpacity(0.45),
-                fontSize: 14,
-                fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
-              )),
-        ),
-      ),
-    );
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
