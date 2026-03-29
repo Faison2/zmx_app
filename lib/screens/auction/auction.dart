@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +20,11 @@ class AuctionModel {
   final double bidIncrement;
   final String startDate;
   final String endDate;
+
+  // ── Raw DateTime fields for countdown calculations ──────────────────────
+  final DateTime startDateRaw;
+  final DateTime endDateRaw;
+
   final String? settlementDate;
   final String status;
   final String allocationMethod;
@@ -49,6 +55,8 @@ class AuctionModel {
     required this.bidIncrement,
     required this.startDate,
     required this.endDate,
+    required this.startDateRaw,
+    required this.endDateRaw,
     this.settlementDate,
     required this.status,
     required this.allocationMethod,
@@ -68,48 +76,50 @@ class AuctionModel {
   });
 
   factory AuctionModel.fromJson(Map<String, dynamic> json) {
+    final rawStart = json['startDate'] as String;
+    final rawEnd   = json['endDate']   as String;
+
+    DateTime parsedStart;
+    DateTime parsedEnd;
+    try { parsedStart = DateTime.parse(rawStart); } catch (_) { parsedStart = DateTime.now(); }
+    try { parsedEnd   = DateTime.parse(rawEnd);   } catch (_) { parsedEnd   = DateTime.now(); }
+
     return AuctionModel(
-      auctionId: json['auctionId'] as int,
-      auctionCode: json['auctionCode'] as String,
+      auctionId:    json['auctionId'] as int,
+      auctionCode:  json['auctionCode'] as String,
       auctionTitle: json['auctionTitle'] as String,
-      auctionType: json['auctionType'] as String,
+      auctionType:  json['auctionType'] as String,
       securityType: json['securityType'] as String?,
-      issuerName: json['issuerName'] as String?,
-      totalVolume: (json['totalVolume'] as num).toDouble(),
+      issuerName:   json['issuerName'] as String?,
+      totalVolume:  (json['totalVolume'] as num).toDouble(),
       minBidAmount: (json['minBidAmount'] as num).toDouble(),
       maxBidAmount: (json['maxBidAmount'] as num).toDouble(),
       bidIncrement: (json['bidIncrement'] as num).toDouble(),
-      startDate: _formatDateTime(json['startDate'] as String),
-      endDate: _formatDateTime(json['endDate'] as String),
+      startDate:    _formatDateTime(rawStart),
+      endDate:      _formatDateTime(rawEnd),
+      startDateRaw: parsedStart,
+      endDateRaw:   parsedEnd,
       settlementDate: json['settlementDate'] != null
-          ? _formatDate(json['settlementDate'] as String)
-          : null,
-      status: json['status'] as String,
+          ? _formatDate(json['settlementDate'] as String) : null,
+      status:           json['status'] as String,
       allocationMethod: json['allocationMethod'] as String,
-      description: json['description'] as String?,
+      description:      json['description'] as String?,
       couponRate: json['couponRate'] != null
-          ? (json['couponRate'] as num).toDouble()
-          : null,
+          ? (json['couponRate'] as num).toDouble() : null,
       maturityDate: json['maturityDate'] != null
-          ? _formatDate(json['maturityDate'] as String)
-          : null,
+          ? _formatDate(json['maturityDate'] as String) : null,
       minimumYield: json['minimumYield'] != null
-          ? (json['minimumYield'] as num).toDouble()
-          : null,
+          ? (json['minimumYield'] as num).toDouble() : null,
       maximumYield: json['maximumYield'] != null
-          ? (json['maximumYield'] as num).toDouble()
-          : null,
-      isCommodityAuction: json['isCommodityAuction'] as bool? ?? false,
+          ? (json['maximumYield'] as num).toDouble() : null,
+      isCommodityAuction:      json['isCommodityAuction'] as bool? ?? false,
       reservePrice: json['reservePrice'] != null
-          ? (json['reservePrice'] as num).toDouble()
-          : null,
-      lotNumber: json['lotNumber'] as String?,
+          ? (json['reservePrice'] as num).toDouble() : null,
+      lotNumber:               json['lotNumber'] as String?,
       lastBidTime: json['lastBidTime'] != null
-          ? _formatDateTime(json['lastBidTime'] as String)
-          : null,
+          ? _formatDateTime(json['lastBidTime'] as String) : null,
       currentHighestBid: json['currentHighestBid'] != null
-          ? (json['currentHighestBid'] as num).toDouble()
-          : null,
+          ? (json['currentHighestBid'] as num).toDouble() : null,
       currentHighestBidderCode: json['currentHighestBidderCode'] as String?,
       currentHighestBidderName: json['currentHighestBidderName'] as String?,
       totalExtensions: json['totalExtensions'] as int? ?? 0,
@@ -274,7 +284,6 @@ class AuctionService {
     throw Exception('Failed to load results (${response.statusCode})');
   }
 
-  // ── UPDATED: new endpoint + lean body, submittedBy hardcoded to 'mobile' ──
   static Future<void> placeBid({
     required String? lotNumber,
     required double bidPrice,
@@ -302,6 +311,117 @@ class AuctionService {
     }
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COUNTDOWN TIMER WIDGET
+// Ticks every second; shows time remaining to endDate when ACTIVE,
+// time until startDate when PENDING, and "Ended" when CLOSED.
+// ─────────────────────────────────────────────────────────────────────────────
+class _AuctionCountdown extends StatefulWidget {
+  final AuctionModel auction;
+  const _AuctionCountdown({required this.auction});
+
+  @override
+  State<_AuctionCountdown> createState() => _AuctionCountdownState();
+}
+
+class _AuctionCountdownState extends State<_AuctionCountdown> {
+  late Timer _timer;
+  late Duration _remaining;
+  late _CountdownMode _mode;
+
+  @override
+  void initState() {
+    super.initState();
+    _compute();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(_compute);
+    });
+  }
+
+  void _compute() {
+    final now   = DateTime.now();
+    final start = widget.auction.startDateRaw;
+    final end   = widget.auction.endDateRaw;
+
+    if (now.isBefore(start)) {
+      _mode      = _CountdownMode.pending;
+      _remaining = start.difference(now);
+    } else if (now.isBefore(end)) {
+      _mode      = _CountdownMode.active;
+      _remaining = end.difference(now);
+    } else {
+      _mode      = _CountdownMode.ended;
+      _remaining = Duration.zero;
+    }
+  }
+
+  @override
+  void dispose() { _timer.cancel(); super.dispose(); }
+
+  String _pad(int n) => n.toString().padLeft(2, '0');
+
+  String get _label {
+    switch (_mode) {
+      case _CountdownMode.pending: return 'Starts in';
+      case _CountdownMode.active:  return 'Ends in';
+      case _CountdownMode.ended:   return 'Ended';
+    }
+  }
+
+  Color get _color {
+    switch (_mode) {
+      case _CountdownMode.pending: return const Color(0xFFD4A017);
+      case _CountdownMode.active:  return const Color(0xFF2DB144);
+      case _CountdownMode.ended:   return Colors.redAccent;
+    }
+  }
+
+  IconData get _icon {
+    switch (_mode) {
+      case _CountdownMode.pending: return Icons.schedule_rounded;
+      case _CountdownMode.active:  return Icons.timer_outlined;
+      case _CountdownMode.ended:   return Icons.timer_off_outlined;
+    }
+  }
+
+  String get _timeString {
+    if (_mode == _CountdownMode.ended) return '--:--:--';
+    final d  = _remaining.inDays;
+    final h  = _pad(_remaining.inHours.remainder(24));
+    final m  = _pad(_remaining.inMinutes.remainder(60));
+    final s  = _pad(_remaining.inSeconds.remainder(60));
+    return d > 0 ? '${d}d $h:$m:$s' : '$h:$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _color;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.28)),
+      ),
+      child: Row(children: [
+        Icon(_icon, size: 15, color: color),
+        const SizedBox(width: 7),
+        Text(_label,
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                color: color.withOpacity(0.75))),
+        const Spacer(),
+        Text(_timeString,
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900,
+                color: color, letterSpacing: 0.5,
+                fontFeatures: const [FontFeature.tabularFigures()])),
+      ]),
+    );
+  }
+}
+
+enum _CountdownMode { pending, active, ended }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AUCTION CONTENT
@@ -593,6 +713,11 @@ class _AuctionContentState extends State<AuctionContent>
           else
             const SizedBox(height: 10),
 
+          // ── COUNTDOWN TIMER ──────────────────────────────────────────────
+          _AuctionCountdown(auction: auction),
+
+          const SizedBox(height: 10),
+
           // Stats row
           Container(
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 0),
@@ -619,6 +744,7 @@ class _AuctionContentState extends State<AuctionContent>
             ),
           ),
 
+          // ── HIGHEST BID STRIP — bidder name intentionally hidden ─────────
           if (auction.isCommodityAuction && auction.currentHighestBid != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
@@ -638,13 +764,7 @@ class _AuctionContentState extends State<AuctionContent>
                       style: const TextStyle(fontSize: 13,
                           fontWeight: FontWeight.w800,
                           color: Color(0xFF2DB144))),
-                  if (auction.currentHighestBidderName != null) ...[
-                    const Spacer(),
-                    Text(auction.currentHighestBidderName!,
-                        style: TextStyle(fontSize: 11,
-                            color: Colors.grey.shade500,
-                            fontWeight: FontWeight.w600)),
-                  ],
+                  // Bidder name removed intentionally
                 ]),
               ),
             ),
@@ -822,7 +942,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
   String get _displayAmount =>
       _amount > 0 ? '\$${_amount.toStringAsFixed(2)}' : 'Auto-calculated';
 
-  // ── UPDATED: uses new AuctionService.placeBid signature ──────────────────
   Future<void> _submitBid() async {
     if (_price <= 0) {
       setState(() => _submitError = 'Please enter a valid bid price.');
@@ -973,6 +1092,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
           const SizedBox(height: 20),
 
+          // ── CLIENT — only code shown, name intentionally hidden ───────────
           _sectionLabel('CLIENT'),
           const SizedBox(height: 8),
           Container(
@@ -982,7 +1102,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.white.withOpacity(0.1)),
             ),
-            child: _infoRow('Client', '$_clientCode · $_clientName'),
+            child: _infoRow('Client Code', _clientCode),
           ),
 
           const SizedBox(height: 18),
@@ -1296,7 +1416,7 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
             rows: [
               _detailRow('Code', auction.auctionCode),
               _detailRow('Type', auction.auctionType),
-              if (auction.lotNumber != null)   _detailRow('Lot', auction.lotNumber!),
+              if (auction.lotNumber != null)    _detailRow('Lot', auction.lotNumber!),
               if (auction.securityType != null) _detailRow('Security', auction.securityType!),
               if (auction.issuerName != null)   _detailRow('Issuer', auction.issuerName!),
               _detailRow('Allocation', auction.allocationMethod),
@@ -1317,8 +1437,7 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
                 _detailRow('Highest Bid', auction.formattedHighestBid,
                     valueColor: auction.currentHighestBid != null
                         ? const Color(0xFF2DB144) : null),
-                if (auction.currentHighestBidderName != null)
-                  _detailRow('Top Bidder', auction.currentHighestBidderName!),
+                // Top Bidder row removed intentionally
                 _detailRow('Extensions', '${auction.totalExtensions}'),
               ] else ...[
                 _detailRow('Coupon Rate', auction.formattedCouponRate),
