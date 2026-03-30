@@ -353,27 +353,19 @@ class AuctionService {
     return null;
   }
 
+  // ── FIXED: PUT /v1/auction/bids/{bidId} with only bidPrice + bidQuantity ──
   static Future<void> editBid({
-    required int?    bidId,
-    required String? lotNumber,
-    required double  bidPrice,
-    required int     bidQuantity,
-    required String  clientCode,
-    required String  clientName,
+    required int    bidId,
+    required double bidPrice,
+    required int    bidQuantity,
   }) async {
-    final path = bidId != null
-        ? '$_base/v1/auction/bids/$bidId' : '$_base/v1/auction/bids';
-    final body = <String, dynamic>{
-      'bidPrice': bidPrice, 'bidQuantity': bidQuantity,
-      'clientCode': clientCode, 'clientName': clientName,
-      'submittedBy': 'mobile',
-      if (lotNumber != null) 'lotNumber': lotNumber,
-      if (bidId != null)     'bidId':     bidId,
-    };
     final res = await http.put(
-      Uri.parse(path),
+      Uri.parse('$_base/v1/auction/bids/$bidId'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
+      body: jsonEncode({
+        'bidPrice':    bidPrice,
+        'bidQuantity': bidQuantity,
+      }),
     ).timeout(const Duration(seconds: 15));
 
     if (res.statusCode != 200 && res.statusCode != 204) {
@@ -483,7 +475,7 @@ class _AuctionContentState extends State<AuctionContent>
   List<AuctionModel> _auctions    = [];
   Set<int>           _biddedIds   = {};
   bool               _loading     = true;
-  bool               _silentLoad  = false; // true during background auto-refresh
+  bool               _silentLoad  = false;
   String?            _error;
   String             _filter      = 'ALL';
   DateTime?          _lastUpdated;
@@ -501,18 +493,13 @@ class _AuctionContentState extends State<AuctionContent>
     _fa = CurvedAnimation(parent: _fc, curve: Curves.easeInOut);
     _load(initial: true);
 
-    // ── Auto-refresh every 15 seconds silently in the background ──
     _autoRefresh = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted && !_loading) _load(silent: true);
     });
   }
 
-  /// [initial] plays the fade-in animation.
-  /// [silent]  refreshes data without showing the full loading spinner —
-  ///           the list stays visible and just updates in place.
   Future<void> _load({bool initial = false, bool silent = false}) async {
     if (silent) {
-      // Don't show spinner, just fetch quietly
       setState(() => _silentLoad = true);
     } else {
       setState(() { _loading = true; _error = null; });
@@ -536,7 +523,6 @@ class _AuctionContentState extends State<AuctionContent>
     } catch (e) {
       if (mounted) {
         setState(() {
-          // On silent refresh failure, keep old data and just clear the flag
           if (!silent) _error = e.toString();
           _loading    = false;
           _silentLoad = false;
@@ -585,7 +571,6 @@ class _AuctionContentState extends State<AuctionContent>
               ..._filtered.asMap().entries.map((e) => _buildCard(e.value, e.key)),
             ],
           ),
-          // ── Silent refresh indicator strip at top ──────────────────────
           if (_silentLoad)
             Positioned(
               top: 0, left: 0, right: 0,
@@ -639,7 +624,6 @@ class _AuctionContentState extends State<AuctionContent>
   Widget _buildHeader() {
     final active = _auctions.where((a) => a.status == 'ACTIVE').length;
 
-    // Format last-updated timestamp
     String updatedStr = '';
     if (_lastUpdated != null) {
       final h = _lastUpdated!.hour.toString().padLeft(2, '0');
@@ -665,7 +649,6 @@ class _AuctionContentState extends State<AuctionContent>
                   color: Color(0xFF2DB144), fontSize: 12, fontWeight: FontWeight.w700)),
             ),
             const SizedBox(width: 8),
-            // ── Prominent green Refresh button ──────────────────────────
             GestureDetector(
               onTap: () => _load(initial: false, silent: false),
               child: Container(
@@ -688,7 +671,6 @@ class _AuctionContentState extends State<AuctionContent>
             ),
           ]),
         ]),
-        // ── Last updated timestamp ─────────────────────────────────────
         if (updatedStr.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 4),
@@ -969,7 +951,9 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
   bool             _success      = false;
   String?          _error;
   PlacedBidRecord? _existing;
-  bool get         _editMode     => _existing != null;
+
+  // Edit mode is only valid when the stored record has a server-side bidId
+  bool get _editMode => _existing != null && _existing!.bidId != null;
 
   final _priceCtrl = TextEditingController();
   final _qtyCtrl   = TextEditingController();
@@ -986,10 +970,13 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     setState(() {
       _clientCode = prefs.getString('user_cds')  ?? 'DEFAULT';
       _clientName = prefs.getString('user_name') ?? 'Default Client';
-      _existing   = existing;
-      if (existing != null) {
-        _priceCtrl.text = existing.bidPrice.toStringAsFixed(2);
-        _qtyCtrl.text   = existing.bidQuantity.toString();
+
+      // Only treat as existing if we have a real server bidId to PUT against
+      _existing = (existing != null && existing.bidId != null) ? existing : null;
+
+      if (_existing != null) {
+        _priceCtrl.text = _existing!.bidPrice.toStringAsFixed(2);
+        _qtyCtrl.text   = _existing!.bidQuantity.toString();
       }
       _loading = false;
     });
@@ -1010,22 +997,30 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     setState(() { _submitting = true; _error = null; });
     try {
       if (_editMode) {
+        // ── FIXED: PUT /v1/auction/bids/{bidId} — only price + quantity ──
         await AuctionService.editBid(
-          bidId: _existing!.bidId, lotNumber: widget.auction.lotNumber,
-          bidPrice: _price, bidQuantity: _qty.toInt(),
-          clientCode: _clientCode, clientName: _clientName,
+          bidId:       _existing!.bidId!,
+          bidPrice:    _price,
+          bidQuantity: _qty.toInt(),
         );
         await BidStore.save(widget.auction.auctionId, PlacedBidRecord(
-          bidId: _existing!.bidId, bidPrice: _price, bidQuantity: _qty.toInt(),
+          bidId:       _existing!.bidId,
+          bidPrice:    _price,
+          bidQuantity: _qty.toInt(),
           submittedAt: DateTime.now().toIso8601String(),
         ));
       } else {
         final bidId = await AuctionService.placeBid(
-          lotNumber: widget.auction.lotNumber, bidPrice: _price,
-          bidQuantity: _qty.toInt(), clientCode: _clientCode, clientName: _clientName,
+          lotNumber:   widget.auction.lotNumber,
+          bidPrice:    _price,
+          bidQuantity: _qty.toInt(),
+          clientCode:  _clientCode,
+          clientName:  _clientName,
         );
         await BidStore.save(widget.auction.auctionId, PlacedBidRecord(
-          bidId: bidId, bidPrice: _price, bidQuantity: _qty.toInt(),
+          bidId:       bidId,
+          bidPrice:    _price,
+          bidQuantity: _qty.toInt(),
           submittedAt: DateTime.now().toIso8601String(),
         ));
       }
@@ -1033,7 +1028,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     } catch (e) {
       if (mounted) setState(() {
         _submitting = false;
-        // Friendly message for edit; raw error for new bids
         _error = _editMode
             ? 'An error occurred. Please try again soon.'
             : e.toString().replaceFirst('Exception: ', '');
