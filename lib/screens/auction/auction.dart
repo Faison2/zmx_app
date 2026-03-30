@@ -8,12 +8,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 // LOCAL BID RECORD  (persisted in SharedPreferences)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Lightweight record saved locally after every successful bid submission.
 class PlacedBidRecord {
-  final int?   bidId;        // server-assigned ID (null when server omits it)
+  final int?   bidId;
   final double bidPrice;
   final int    bidQuantity;
-  final String submittedAt; // ISO-8601
+  final String submittedAt;
 
   PlacedBidRecord({
     this.bidId,
@@ -41,8 +40,7 @@ class PlacedBidRecord {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BID STORE  (SharedPreferences helper)
-// Key pattern: "bid_<auctionId>"
+// BID STORE
 // ─────────────────────────────────────────────────────────────────────────────
 class BidStore {
   static String _key(int auctionId) => 'bid_$auctionId';
@@ -323,7 +321,6 @@ class AuctionService {
     throw Exception('Failed to load results (${res.statusCode})');
   }
 
-  /// POST a new bid. Returns the server-assigned bidId when the response includes one.
   static Future<int?> placeBid({
     required String? lotNumber,
     required double  bidPrice,
@@ -356,7 +353,6 @@ class AuctionService {
     return null;
   }
 
-  /// PUT an update to an existing bid.
   static Future<void> editBid({
     required int?    bidId,
     required String? lotNumber,
@@ -484,11 +480,15 @@ class _AuctionContentState extends State<AuctionContent>
   late AnimationController _fc;
   late Animation<double>   _fa;
 
-  List<AuctionModel> _auctions  = [];
-  Set<int>           _biddedIds = {};   // auctionIds with a placed bid
-  bool               _loading   = true;
+  List<AuctionModel> _auctions    = [];
+  Set<int>           _biddedIds   = {};
+  bool               _loading     = true;
+  bool               _silentLoad  = false; // true during background auto-refresh
   String?            _error;
-  String             _filter    = 'ALL';
+  String             _filter      = 'ALL';
+  DateTime?          _lastUpdated;
+  Timer?             _autoRefresh;
+
   final _filters = ['ALL', 'ACTIVE', 'PENDING', 'CLOSED'];
 
   List<AuctionModel> get _filtered => _filter == 'ALL'
@@ -499,11 +499,25 @@ class _AuctionContentState extends State<AuctionContent>
     super.initState();
     _fc = AnimationController(vsync: this, duration: const Duration(milliseconds: 450));
     _fa = CurvedAnimation(parent: _fc, curve: Curves.easeInOut);
-    _load();
+    _load(initial: true);
+
+    // ── Auto-refresh every 15 seconds silently in the background ──
+    _autoRefresh = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted && !_loading) _load(silent: true);
+    });
   }
 
-  Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
+  /// [initial] plays the fade-in animation.
+  /// [silent]  refreshes data without showing the full loading spinner —
+  ///           the list stays visible and just updates in place.
+  Future<void> _load({bool initial = false, bool silent = false}) async {
+    if (silent) {
+      // Don't show spinner, just fetch quietly
+      setState(() => _silentLoad = true);
+    } else {
+      setState(() { _loading = true; _error = null; });
+    }
+
     try {
       final res = await Future.wait([
         AuctionService.fetchAll(),
@@ -511,20 +525,33 @@ class _AuctionContentState extends State<AuctionContent>
       ]);
       if (mounted) {
         setState(() {
-          _auctions  = res[0] as List<AuctionModel>;
-          _biddedIds = res[1] as Set<int>;
-          _loading   = false;
+          _auctions     = res[0] as List<AuctionModel>;
+          _biddedIds    = res[1] as Set<int>;
+          _loading      = false;
+          _silentLoad   = false;
+          _lastUpdated  = DateTime.now();
         });
-        _fc.forward(from: 0);
+        if (initial) _fc.forward(from: 0);
       }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      if (mounted) {
+        setState(() {
+          // On silent refresh failure, keep old data and just clear the flag
+          if (!silent) _error = e.toString();
+          _loading    = false;
+          _silentLoad = false;
+        });
+      }
     }
   }
 
-  @override void dispose() { _fc.dispose(); super.dispose(); }
+  @override
+  void dispose() {
+    _autoRefresh?.cancel();
+    _fc.dispose();
+    super.dispose();
+  }
 
-  /// Opens bid sheet then refreshes the bidded-IDs so the card button updates.
   void _openBidSheet(AuctionModel auction) async {
     await showModalBottomSheet(
       context: context, isScrollControlled: true,
@@ -546,13 +573,28 @@ class _AuctionContentState extends State<AuctionContent>
     if (_error != null) return _buildError();
     return FadeTransition(
       opacity: _fa,
-      child: ListView(
-        padding: EdgeInsets.only(
-            top: 4, bottom: MediaQuery.of(context).padding.bottom + 100),
+      child: Stack(
         children: [
-          _buildHeader(), _buildFilterBar(),
-          if (_filtered.isEmpty) _buildEmpty(),
-          ..._filtered.asMap().entries.map((e) => _buildCard(e.value, e.key)),
+          ListView(
+            padding: EdgeInsets.only(
+                top: 4, bottom: MediaQuery.of(context).padding.bottom + 100),
+            children: [
+              _buildHeader(),
+              _buildFilterBar(),
+              if (_filtered.isEmpty) _buildEmpty(),
+              ..._filtered.asMap().entries.map((e) => _buildCard(e.value, e.key)),
+            ],
+          ),
+          // ── Silent refresh indicator strip at top ──────────────────────
+          if (_silentLoad)
+            Positioned(
+              top: 0, left: 0, right: 0,
+              child: LinearProgressIndicator(
+                minHeight: 2,
+                backgroundColor: Colors.transparent,
+                color: const Color(0xFF2DB144).withOpacity(0.7),
+              ),
+            ),
         ],
       ),
     );
@@ -575,7 +617,7 @@ class _AuctionContentState extends State<AuctionContent>
       Text(_error ?? '', style: const TextStyle(fontSize: 12, color: Colors.grey),
           textAlign: TextAlign.center),
       const SizedBox(height: 24),
-      GestureDetector(onTap: _load, child: Container(
+      GestureDetector(onTap: () => _load(initial: true), child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 13),
         decoration: BoxDecoration(
             gradient: const LinearGradient(colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]),
@@ -596,30 +638,70 @@ class _AuctionContentState extends State<AuctionContent>
 
   Widget _buildHeader() {
     final active = _auctions.where((a) => a.status == 'ACTIVE').length;
+
+    // Format last-updated timestamp
+    String updatedStr = '';
+    if (_lastUpdated != null) {
+      final h = _lastUpdated!.hour.toString().padLeft(2, '0');
+      final m = _lastUpdated!.minute.toString().padLeft(2, '0');
+      final s = _lastUpdated!.second.toString().padLeft(2, '0');
+      updatedStr = '$h:$m:$s';
+    }
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        const Text('Auction', style: TextStyle(
-            fontSize: 30, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
-        Row(children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-                color: const Color(0xFF2DB144).withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFF2DB144).withOpacity(0.35))),
-            child: Text('$active Active', style: const TextStyle(
-                color: Color(0xFF2DB144), fontSize: 12, fontWeight: FontWeight.w700)),
-          ),
-          const SizedBox(width: 8),
-          GestureDetector(onTap: _load, child: Container(
-            padding: const EdgeInsets.all(7),
-            decoration: BoxDecoration(color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.grey.shade200)),
-            child: const Icon(Icons.refresh_rounded, size: 16, color: Color(0xFF1A1A1A)),
-          )),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('Auction', style: TextStyle(
+              fontSize: 30, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                  color: const Color(0xFF2DB144).withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFF2DB144).withOpacity(0.35))),
+              child: Text('$active Active', style: const TextStyle(
+                  color: Color(0xFF2DB144), fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
+            const SizedBox(width: 8),
+            // ── Prominent green Refresh button ──────────────────────────
+            GestureDetector(
+              onTap: () => _load(initial: false, silent: false),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                      colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [BoxShadow(
+                      color: const Color(0xFF2DB144).withOpacity(0.35),
+                      blurRadius: 8, offset: const Offset(0, 3))],
+                ),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.refresh_rounded, size: 15, color: Colors.white),
+                  SizedBox(width: 5),
+                  Text('Refresh', style: TextStyle(
+                      color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
+                ]),
+              ),
+            ),
+          ]),
         ]),
+        // ── Last updated timestamp ─────────────────────────────────────
+        if (updatedStr.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(children: [
+              Icon(Icons.circle, size: 7,
+                  color: const Color(0xFF2DB144).withOpacity(0.7)),
+              const SizedBox(width: 5),
+              Text('Live · updated $updatedStr',
+                  style: TextStyle(fontSize: 11,
+                      color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+            ]),
+          ),
+        const SizedBox(height: 8),
       ]),
     );
   }
@@ -685,7 +767,6 @@ class _AuctionContentState extends State<AuctionContent>
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-          // ── Header ──────────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
             child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -693,7 +774,6 @@ class _AuctionContentState extends State<AuctionContent>
                   style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
                       color: Color(0xFFD4A017), letterSpacing: 0.5))),
               const SizedBox(width: 8),
-              // "BID PLACED" chip
               if (hasPlacedBid && isActive) ...[
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -728,11 +808,9 @@ class _AuctionContentState extends State<AuctionContent>
                     style: TextStyle(fontSize: 12, color: Colors.grey.shade500)))
           else const SizedBox(height: 10),
 
-          // ── Countdown ────────────────────────────────────────────────────
           _AuctionCountdown(auction: a),
           const SizedBox(height: 10),
 
-          // ── Stats ────────────────────────────────────────────────────────
           Container(
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 0),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -747,7 +825,6 @@ class _AuctionContentState extends State<AuctionContent>
             ]),
           ),
 
-          // ── Highest bid (name hidden) ────────────────────────────────────
           if (a.isCommodityAuction && a.currentHighestBid != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
@@ -782,7 +859,6 @@ class _AuctionContentState extends State<AuctionContent>
 
           const SizedBox(height: 12),
 
-          // ── Action buttons ───────────────────────────────────────────────
           Container(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
             decoration: BoxDecoration(
@@ -812,7 +888,6 @@ class _AuctionContentState extends State<AuctionContent>
               )),
               const SizedBox(width: 10),
 
-              // PLACE BID / EDIT BID button
               GestureDetector(
                 onTap: isActive ? () => _openBidSheet(a) : null,
                 child: AnimatedContainer(
@@ -958,7 +1033,10 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     } catch (e) {
       if (mounted) setState(() {
         _submitting = false;
-        _error = e.toString().replaceFirst('Exception: ', '');
+        // Friendly message for edit; raw error for new bids
+        _error = _editMode
+            ? 'An error occurred. Please try again soon.'
+            : e.toString().replaceFirst('Exception: ', '');
       });
     }
   }
@@ -1031,7 +1109,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
           _handle(),
 
-          // Title + edit badge
           Row(children: [
             Text(_editMode ? 'Edit Bid' : 'Place Bid',
                 style: TextStyle(color: titleColor, fontSize: 22,
@@ -1054,7 +1131,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
           Divider(color: Colors.white.withOpacity(0.1)),
           const SizedBox(height: 14),
 
-          // Previous bid summary (edit only)
           if (_editMode) ...[
             Container(
               padding: const EdgeInsets.all(14),
@@ -1082,7 +1158,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
             ),
           ],
 
-          // Auction info card
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -1126,7 +1201,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
           const SizedBox(height: 20),
 
-          // Client code (name hidden)
           _secLabel('CLIENT'), const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(14),
@@ -1178,7 +1252,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
           const SizedBox(height: 28),
 
-          // Buttons
           Row(children: [
             Expanded(child: GestureDetector(onTap: () => Navigator.pop(context),
                 child: Container(
@@ -1665,7 +1738,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     ]);
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
   Widget _statusBadge(String s) {
     final c = _sc(s);
     return Container(
