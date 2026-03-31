@@ -76,20 +76,23 @@ class BidStore {
 // DATA MODELS
 // ─────────────────────────────────────────────────────────────────────────────
 class AuctionModel {
-  final int    auctionId;
-  final String auctionCode;
-  final String auctionTitle;
-  final String auctionType;
+  final int     auctionId;
+  final String  auctionCode;
+  final String  auctionTitle;
+  final String  auctionType;
   final String? securityType;
   final String? issuerName;
-  final double totalVolume;
-  final double minBidAmount;
-  final double maxBidAmount;
-  final double bidIncrement;
-  final String startDate;
-  final String endDate;
+  final double  totalVolume;
+  // CHANGED: nullable — API now sends null for some auctions
+  final double? minBidAmount;
+  final double? maxBidAmount;
+  final double  bidIncrement;
+  final String  startDate;
+  final String  endDate;
   final DateTime startDateRaw;
   final DateTime endDateRaw;
+  // NEW: live end time that accounts for extensions; drives the countdown
+  final DateTime? currentEndTimeRaw;
   final String? settlementDate;
   final String  status;
   final String  allocationMethod;
@@ -100,7 +103,10 @@ class AuctionModel {
   final double? maximumYield;
   final bool    isCommodityAuction;
   final double? reservePrice;
+  // NEW: hard ceiling price (separate from maxBidAmount)
+  final double? maximumBidPrice;
   final String? lotNumber;
+  final String? auctionDayDate;
   final String? lastBidTime;
   final double? currentHighestBid;
   final String? currentHighestBidderCode;
@@ -115,13 +121,14 @@ class AuctionModel {
     this.securityType,
     this.issuerName,
     required this.totalVolume,
-    required this.minBidAmount,
-    required this.maxBidAmount,
+    this.minBidAmount,
+    this.maxBidAmount,
     required this.bidIncrement,
     required this.startDate,
     required this.endDate,
     required this.startDateRaw,
     required this.endDateRaw,
+    this.currentEndTimeRaw,
     this.settlementDate,
     required this.status,
     required this.allocationMethod,
@@ -132,7 +139,9 @@ class AuctionModel {
     this.maximumYield,
     required this.isCommodityAuction,
     this.reservePrice,
+    this.maximumBidPrice,
     this.lotNumber,
+    this.auctionDayDate,
     this.lastBidTime,
     this.currentHighestBid,
     this.currentHighestBidderCode,
@@ -146,19 +155,32 @@ class AuctionModel {
     DateTime ps; try { ps = DateTime.parse(rawStart); } catch (_) { ps = DateTime.now(); }
     DateTime pe; try { pe = DateTime.parse(rawEnd);   } catch (_) { pe = DateTime.now(); }
 
+    // NEW: parse currentEndTime; falls back to null (countdown uses endDateRaw)
+    DateTime? currentEndTimeRaw;
+    final rawCET = json['currentEndTime'] as String?;
+    if (rawCET != null) {
+      try { currentEndTimeRaw = DateTime.parse(rawCET); } catch (_) {}
+    }
+
     return AuctionModel(
-      auctionId:    json['auctionId'] as int,
-      auctionCode:  json['auctionCode'] as String,
+      auctionId:    json['auctionId']    as int,
+      auctionCode:  json['auctionCode']  as String,
       auctionTitle: json['auctionTitle'] as String,
-      auctionType:  json['auctionType'] as String,
+      auctionType:  json['auctionType']  as String,
       securityType: json['securityType'] as String?,
       issuerName:   json['issuerName']   as String?,
       totalVolume:  (json['totalVolume'] as num).toDouble(),
-      minBidAmount: (json['minBidAmount'] as num).toDouble(),
-      maxBidAmount: (json['maxBidAmount'] as num).toDouble(),
+      // CHANGED: null-guarded — this was causing the crash
+      minBidAmount: json['minBidAmount'] != null
+          ? (json['minBidAmount'] as num).toDouble() : null,
+      maxBidAmount: json['maxBidAmount'] != null
+          ? (json['maxBidAmount'] as num).toDouble() : null,
       bidIncrement: (json['bidIncrement'] as num).toDouble(),
-      startDate: _fmtDT(rawStart), endDate: _fmtDT(rawEnd),
-      startDateRaw: ps, endDateRaw: pe,
+      startDate: _fmtDT(rawStart),
+      endDate:   _fmtDT(rawEnd),
+      startDateRaw:      ps,
+      endDateRaw:        pe,
+      currentEndTimeRaw: currentEndTimeRaw,
       settlementDate: json['settlementDate'] != null
           ? _fmtD(json['settlementDate'] as String) : null,
       status:           json['status']           as String,
@@ -172,17 +194,21 @@ class AuctionModel {
           ? (json['minimumYield'] as num).toDouble() : null,
       maximumYield: json['maximumYield'] != null
           ? (json['maximumYield'] as num).toDouble() : null,
-      isCommodityAuction:       json['isCommodityAuction'] as bool? ?? false,
+      isCommodityAuction: json['isCommodityAuction'] as bool? ?? false,
       reservePrice: json['reservePrice'] != null
           ? (json['reservePrice'] as num).toDouble() : null,
-      lotNumber:                json['lotNumber']                as String?,
+      // NEW
+      maximumBidPrice: json['maximumBidPrice'] != null
+          ? (json['maximumBidPrice'] as num).toDouble() : null,
+      lotNumber:      json['lotNumber']      as String?,
+      auctionDayDate: json['auctionDayDate'] as String?,
       lastBidTime: json['lastBidTime'] != null
           ? _fmtDT(json['lastBidTime'] as String) : null,
       currentHighestBid: json['currentHighestBid'] != null
           ? (json['currentHighestBid'] as num).toDouble() : null,
       currentHighestBidderCode: json['currentHighestBidderCode'] as String?,
       currentHighestBidderName: json['currentHighestBidderName'] as String?,
-      totalExtensions:          json['totalExtensions'] as int? ?? 0,
+      totalExtensions: json['totalExtensions'] as int? ?? 0,
     );
   }
 
@@ -211,20 +237,36 @@ class AuctionModel {
 
   String get formattedTotalVolume => isCommodityAuction
       ? '${totalVolume.toStringAsFixed(0)} T' : '\$${_cmp(totalVolume)}';
-  String get formattedMinBid       => '\$${_cmp(minBidAmount)}';
-  String get formattedMaxBid       => '\$${_cmp(maxBidAmount)}';
-  String get formattedBidIncrement => '\$${_cmp(bidIncrement)}';
-  String get formattedCouponRate   =>
+
+  // CHANGED: null-safe display
+  String get formattedMinBid =>
+      minBidAmount != null ? '\$${_cmp(minBidAmount!)}' : '—';
+  String get formattedMaxBid =>
+      maxBidAmount != null ? '\$${_cmp(maxBidAmount!)}' : '—';
+
+  // NEW: effective ceiling — prefer maximumBidPrice, fall back to maxBidAmount
+  double? get effectiveMaxPrice => maximumBidPrice ?? maxBidAmount;
+  String get formattedEffectiveMaxPrice =>
+      effectiveMaxPrice != null ? '\$${_cmp(effectiveMaxPrice!)}' : '—';
+
+  String get formattedBidIncrement  => '\$${_cmp(bidIncrement)}';
+  String get formattedCouponRate    =>
       couponRate != null ? '${couponRate!.toStringAsFixed(2)}%' : 'N/A';
-  String get formattedReservePrice =>
+  String get formattedReservePrice  =>
       reservePrice != null ? '\$${reservePrice!.toStringAsFixed(2)}' : 'N/A';
-  String get formattedHighestBid   => currentHighestBid != null
+  String get formattedMaximumBidPrice =>
+      maximumBidPrice != null ? '\$${maximumBidPrice!.toStringAsFixed(2)}' : 'N/A';
+  String get formattedHighestBid    => currentHighestBid != null
       ? '\$${currentHighestBid!.toStringAsFixed(2)}' : 'No bids yet';
 
+  // Countdown target: use currentEndTimeRaw when available (reflects extensions),
+  // otherwise fall back to the scheduled endDateRaw.
+  DateTime get effectiveEndTime => currentEndTimeRaw ?? endDateRaw;
+
   static String _cmp(double v) {
-    if (v >= 1000000) return '${(v/1000000).toStringAsFixed(1)}M';
-    if (v >= 1000)    return '${(v/1000).toStringAsFixed(1)}K';
-    return v%1==0 ? v.toInt().toString() : v.toStringAsFixed(2);
+    if (v >= 1000000) return '${(v / 1000000).toStringAsFixed(1)}M';
+    if (v >= 1000)    return '${(v / 1000).toStringAsFixed(1)}K';
+    return v % 1 == 0 ? v.toInt().toString() : v.toStringAsFixed(2);
   }
 }
 
@@ -240,15 +282,15 @@ class AuctionResultModel {
   final String? publishedDate, settlementDate;
 
   AuctionResultModel({
-    required this.resultId, required this.auctionId,
+    required this.resultId,          required this.auctionId,
     required this.totalBidsReceived, required this.totalBidAmount,
-    required this.totalAllocated, required this.averageBidPrice,
-    required this.highestBidPrice, required this.lowestBidPrice,
-    required this.cutoffPrice, required this.averageYield,
-    required this.highestYield, required this.lowestYield,
-    this.cutoffYield, required this.allocationRatio,
-    required this.bidToCoverRatio, this.uniformPrice,
-    required this.resultPublished, this.publishedDate,
+    required this.totalAllocated,    required this.averageBidPrice,
+    required this.highestBidPrice,   required this.lowestBidPrice,
+    required this.cutoffPrice,       required this.averageYield,
+    required this.highestYield,      required this.lowestYield,
+    this.cutoffYield,                required this.allocationRatio,
+    required this.bidToCoverRatio,   this.uniformPrice,
+    required this.resultPublished,   this.publishedDate,
     required this.settlementCompleted, this.settlementDate,
   });
 
@@ -266,10 +308,12 @@ class AuctionResultModel {
         averageYield:        (j['averageYield']     as num).toDouble(),
         highestYield:        (j['highestYield']     as num).toDouble(),
         lowestYield:         (j['lowestYield']      as num).toDouble(),
-        cutoffYield:  j['cutoffYield']  != null ? (j['cutoffYield']  as num).toDouble() : null,
+        cutoffYield: j['cutoffYield'] != null
+            ? (j['cutoffYield'] as num).toDouble() : null,
         allocationRatio:     (j['allocationRatio']  as num).toDouble(),
         bidToCoverRatio:     (j['bidToCoverRatio']  as num).toDouble(),
-        uniformPrice: j['uniformPrice'] != null ? (j['uniformPrice'] as num).toDouble() : null,
+        uniformPrice: j['uniformPrice'] != null
+            ? (j['uniformPrice'] as num).toDouble() : null,
         resultPublished:     j['resultPublished']     as bool? ?? false,
         publishedDate:       j['publishedDate']       as String?,
         settlementCompleted: j['settlementCompleted'] as bool? ?? false,
@@ -277,8 +321,8 @@ class AuctionResultModel {
       );
 
   static String _f(double v) =>
-      v >= 1e6 ? '\$${(v/1e6).toStringAsFixed(2)}M'
-          : v >= 1e3 ? '\$${(v/1e3).toStringAsFixed(2)}K'
+      v >= 1e6 ? '\$${(v / 1e6).toStringAsFixed(2)}M'
+          : v >= 1e3 ? '\$${(v / 1e3).toStringAsFixed(2)}K'
           : '\$${v.toStringAsFixed(2)}';
 
   String get fmtTotalBidAmount  => _f(totalBidAmount);
@@ -304,18 +348,21 @@ class AuctionService {
         .timeout(const Duration(seconds: 15));
     if (res.statusCode == 200) {
       return (jsonDecode(res.body) as List)
-          .map((e) => AuctionModel.fromJson(e)).toList();
+          .map((e) => AuctionModel.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
     throw Exception('Failed to load auctions (${res.statusCode})');
   }
 
   static Future<AuctionResultModel?> fetchResults(int auctionId) async {
-    final res = await http.get(Uri.parse('$_base/v1/auction/$auctionId/results'))
+    final res = await http
+        .get(Uri.parse('$_base/v1/auction/$auctionId/results'))
         .timeout(const Duration(seconds: 15));
     if (res.statusCode == 200) {
       final body = res.body.trim();
       if (body == 'null' || body.isEmpty) return null;
-      return AuctionResultModel.fromJson(jsonDecode(body));
+      return AuctionResultModel.fromJson(
+          jsonDecode(body) as Map<String, dynamic>);
     }
     if (res.statusCode == 404) return null;
     throw Exception('Failed to load results (${res.statusCode})');
@@ -329,8 +376,10 @@ class AuctionService {
     required String  clientName,
   }) async {
     final body = <String, dynamic>{
-      'bidPrice': bidPrice, 'bidQuantity': bidQuantity,
-      'clientCode': clientCode, 'clientName': clientName,
+      'bidPrice':    bidPrice,
+      'bidQuantity': bidQuantity,
+      'clientCode':  clientCode,
+      'clientName':  clientName,
       'submittedBy': 'mobile',
       if (lotNumber != null) 'lotNumber': lotNumber,
     };
@@ -341,12 +390,14 @@ class AuctionService {
     ).timeout(const Duration(seconds: 15));
 
     if (res.statusCode != 200 && res.statusCode != 201) {
-      throw Exception('Failed to place bid (${res.statusCode}): ${res.body}');
+      throw Exception(
+          'Failed to place bid (${res.statusCode}): ${res.body}');
     }
     try {
       final decoded = jsonDecode(res.body);
       if (decoded is Map) {
-        return (decoded['bidId'] ?? decoded['id'] ?? decoded['bid_id']) as int?;
+        return (decoded['bidId'] ?? decoded['id'] ?? decoded['bid_id'])
+        as int?;
       }
       if (decoded is int) return decoded;
     } catch (_) {}
@@ -368,13 +419,16 @@ class AuctionService {
     ).timeout(const Duration(seconds: 15));
 
     if (res.statusCode != 200 && res.statusCode != 204) {
-      throw Exception('Failed to update bid (${res.statusCode}): ${res.body}');
+      throw Exception(
+          'Failed to update bid (${res.statusCode}): ${res.body}');
     }
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COUNTDOWN WIDGET
+// CHANGED: uses auction.effectiveEndTime (currentEndTimeRaw ?? endDateRaw)
+//          so auction extensions are automatically reflected.
 // ─────────────────────────────────────────────────────────────────────────────
 enum _CMode { pending, active, ended }
 
@@ -398,15 +452,18 @@ class _AuctionCountdownState extends State<_AuctionCountdown> {
   }
 
   void _compute() {
-    final now = DateTime.now();
+    final now          = DateTime.now();
+    // CHANGED: use effectiveEndTime so extensions shift the countdown target
+    final effectiveEnd = widget.auction.effectiveEndTime;
     if (now.isBefore(widget.auction.startDateRaw)) {
-      _mode = _CMode.pending;
+      _mode      = _CMode.pending;
       _remaining = widget.auction.startDateRaw.difference(now);
-    } else if (now.isBefore(widget.auction.endDateRaw)) {
-      _mode = _CMode.active;
-      _remaining = widget.auction.endDateRaw.difference(now);
+    } else if (now.isBefore(effectiveEnd)) {
+      _mode      = _CMode.active;
+      _remaining = effectiveEnd.difference(now);
     } else {
-      _mode = _CMode.ended; _remaining = Duration.zero;
+      _mode = _CMode.ended;
+      _remaining = Duration.zero;
     }
   }
 
@@ -414,14 +471,14 @@ class _AuctionCountdownState extends State<_AuctionCountdown> {
 
   String _pad(int n) => n.toString().padLeft(2, '0');
 
-  Color get _color => _mode == _CMode.active ? const Color(0xFF2DB144)
+  Color get _color => _mode == _CMode.active  ? const Color(0xFF2DB144)
       : _mode == _CMode.pending ? const Color(0xFFD4A017)
       : Colors.redAccent;
 
-  String get _label => _mode == _CMode.active ? 'Ends in'
+  String get _label => _mode == _CMode.active  ? 'Ends in'
       : _mode == _CMode.pending ? 'Starts in' : 'Ended';
 
-  IconData get _icon => _mode == _CMode.active ? Icons.timer_outlined
+  IconData get _icon => _mode == _CMode.active  ? Icons.timer_outlined
       : _mode == _CMode.pending ? Icons.schedule_rounded
       : Icons.timer_off_outlined;
 
@@ -441,17 +498,34 @@ class _AuctionCountdownState extends State<_AuctionCountdown> {
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
       decoration: BoxDecoration(
-        color: c.withOpacity(0.07), borderRadius: BorderRadius.circular(12),
+        color: c.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: c.withOpacity(0.28)),
       ),
       child: Row(children: [
         Icon(_icon, size: 15, color: c),
         const SizedBox(width: 7),
-        Text(_label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
-            color: c.withOpacity(0.75))),
+        Text(_label, style: TextStyle(fontSize: 11,
+            fontWeight: FontWeight.w700, color: c.withOpacity(0.75))),
+        // NEW: show extension badge when extensions have occurred
+        if (widget.auction.totalExtensions > 0) ...[
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+                color: const Color(0xFFD4A017).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                    color: const Color(0xFFD4A017).withOpacity(0.4))),
+            child: Text('+${widget.auction.totalExtensions} ext',
+                style: const TextStyle(fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFFD4A017))),
+          ),
+        ],
         const Spacer(),
-        Text(_timeStr, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900,
-            color: c, letterSpacing: 0.5,
+        Text(_timeStr, style: TextStyle(fontSize: 14,
+            fontWeight: FontWeight.w900, color: c, letterSpacing: 0.5,
             fontFeatures: const [FontFeature.tabularFigures()])),
       ]),
     );
@@ -471,34 +545,33 @@ class _AuctionContentState extends State<AuctionContent>
   late AnimationController _fc;
   late Animation<double>   _fa;
 
-  List<AuctionModel>        _auctions    = [];
-  // ── CHANGED: full record map instead of just IDs ──
-  Map<int, PlacedBidRecord> _bidRecords  = {};
-  bool               _loading     = true;
-  bool               _silentLoad  = false;
-  String?            _error;
-  String             _filter      = 'ALL';
-  DateTime?          _lastUpdated;
-  Timer?             _autoRefresh;
+  List<AuctionModel>        _auctions   = [];
+  Map<int, PlacedBidRecord> _bidRecords = {};
+  bool      _loading    = true;
+  bool      _silentLoad = false;
+  String?   _error;
+  String    _filter     = 'ALL';
+  DateTime? _lastUpdated;
+  Timer?    _autoRefresh;
 
   final _filters = ['ALL', 'ACTIVE', 'PENDING', 'CLOSED'];
 
   List<AuctionModel> get _filtered => _filter == 'ALL'
-      ? _auctions : _auctions.where((a) => a.status == _filter).toList();
+      ? _auctions
+      : _auctions.where((a) => a.status == _filter).toList();
 
   @override
   void initState() {
     super.initState();
-    _fc = AnimationController(vsync: this, duration: const Duration(milliseconds: 450));
+    _fc = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 450));
     _fa = CurvedAnimation(parent: _fc, curve: Curves.easeInOut);
     _load(initial: true);
-
     _autoRefresh = Timer.periodic(const Duration(seconds: 15), (_) {
       if (mounted && !_loading) _load(silent: true);
     });
   }
 
-  // ── CHANGED: load full PlacedBidRecord for every stored auction ID ──
   Future<Map<int, PlacedBidRecord>> _loadAllRecords() async {
     final ids     = await BidStore.loadAllAuctionIds();
     final records = <int, PlacedBidRecord>{};
@@ -517,7 +590,6 @@ class _AuctionContentState extends State<AuctionContent>
     }
 
     try {
-      // ── CHANGED: fetch auctions and full bid records in parallel ──
       final results = await Future.wait([
         AuctionService.fetchAll(),
         _loadAllRecords(),
@@ -556,7 +628,6 @@ class _AuctionContentState extends State<AuctionContent>
       backgroundColor: Colors.transparent,
       builder: (_) => _PlaceBidSheet(auction: auction),
     );
-    // ── CHANGED: reload full records after sheet closes ──
     if (mounted) {
       final records = await _loadAllRecords();
       setState(() => _bidRecords = records);
@@ -564,7 +635,8 @@ class _AuctionContentState extends State<AuctionContent>
   }
 
   void _showDetails(AuctionModel a) => Navigator.push(
-      context, MaterialPageRoute(builder: (_) => _AuctionDetailsScreen(auction: a)));
+      context,
+      MaterialPageRoute(builder: (_) => _AuctionDetailsScreen(auction: a)));
 
   @override
   Widget build(BuildContext context) {
@@ -572,36 +644,38 @@ class _AuctionContentState extends State<AuctionContent>
     if (_error != null) return _buildError();
     return FadeTransition(
       opacity: _fa,
-      child: Stack(
-        children: [
-          ListView(
-            padding: EdgeInsets.only(
-                top: 4, bottom: MediaQuery.of(context).padding.bottom + 100),
-            children: [
-              _buildHeader(),
-              _buildFilterBar(),
-              if (_filtered.isEmpty) _buildEmpty(),
-              ..._filtered.asMap().entries.map((e) => _buildCard(e.value, e.key)),
-            ],
-          ),
-          if (_silentLoad)
-            Positioned(
-              top: 0, left: 0, right: 0,
-              child: LinearProgressIndicator(
-                minHeight: 2,
-                backgroundColor: Colors.transparent,
-                color: const Color(0xFF2DB144).withOpacity(0.7),
-              ),
+      child: Stack(children: [
+        ListView(
+          padding: EdgeInsets.only(
+              top: 4,
+              bottom: MediaQuery.of(context).padding.bottom + 100),
+          children: [
+            _buildHeader(),
+            _buildFilterBar(),
+            if (_filtered.isEmpty) _buildEmpty(),
+            ..._filtered.asMap().entries
+                .map((e) => _buildCard(e.value, e.key)),
+          ],
+        ),
+        if (_silentLoad)
+          Positioned(
+            top: 0, left: 0, right: 0,
+            child: LinearProgressIndicator(
+              minHeight: 2,
+              backgroundColor: Colors.transparent,
+              color: const Color(0xFF2DB144).withOpacity(0.7),
             ),
-        ],
-      ),
+          ),
+      ]),
     );
   }
 
   Widget _buildLoading() => const Center(child: Column(
       mainAxisAlignment: MainAxisAlignment.center, children: [
-    CircularProgressIndicator(color: Color(0xFF2DB144)), SizedBox(height: 16),
-    Text('Loading auctions...', style: TextStyle(color: Colors.grey, fontSize: 14)),
+    CircularProgressIndicator(color: Color(0xFF2DB144)),
+    SizedBox(height: 16),
+    Text('Loading auctions...',
+        style: TextStyle(color: Colors.grey, fontSize: 14)),
   ]));
 
   Widget _buildError() => Center(child: Padding(
@@ -610,33 +684,40 @@ class _AuctionContentState extends State<AuctionContent>
       const Icon(Icons.wifi_off_rounded, size: 52, color: Colors.redAccent),
       const SizedBox(height: 16),
       const Text('Failed to load auctions', style: TextStyle(
-          fontSize: 18, fontWeight: FontWeight.w800, color: Color(0xFF1A1A1A))),
+          fontSize: 18, fontWeight: FontWeight.w800,
+          color: Color(0xFF1A1A1A))),
       const SizedBox(height: 8),
-      Text(_error ?? '', style: const TextStyle(fontSize: 12, color: Colors.grey),
+      Text(_error ?? '', style: const TextStyle(
+          fontSize: 12, color: Colors.grey),
           textAlign: TextAlign.center),
       const SizedBox(height: 24),
-      GestureDetector(onTap: () => _load(initial: true), child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 13),
-        decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]),
-            borderRadius: BorderRadius.circular(12)),
-        child: const Text('Retry', style: TextStyle(
-            color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
-      )),
+      GestureDetector(
+        onTap: () => _load(initial: true),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 13),
+          decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]),
+              borderRadius: BorderRadius.circular(12)),
+          child: const Text('Retry', style: TextStyle(
+              color: Colors.white, fontWeight: FontWeight.w800,
+              fontSize: 15)),
+        ),
+      ),
     ]),
   ));
 
   Widget _buildEmpty() => const Padding(
       padding: EdgeInsets.symmetric(vertical: 60),
       child: Column(children: [
-        Icon(Icons.gavel_rounded, size: 48, color: Colors.grey), SizedBox(height: 12),
+        Icon(Icons.gavel_rounded, size: 48, color: Colors.grey),
+        SizedBox(height: 12),
         Text('No auctions found', style: TextStyle(
             color: Colors.grey, fontSize: 15, fontWeight: FontWeight.w600)),
       ]));
 
   Widget _buildHeader() {
     final active = _auctions.where((a) => a.status == 'ACTIVE').length;
-
     String updatedStr = '';
     if (_lastUpdated != null) {
       final h = _lastUpdated!.hour.toString().padLeft(2, '0');
@@ -644,28 +725,32 @@ class _AuctionContentState extends State<AuctionContent>
       final s = _lastUpdated!.second.toString().padLeft(2, '0');
       updatedStr = '$h:$m:$s';
     }
-
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           const Text('Auction', style: TextStyle(
-              fontSize: 30, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
+              fontSize: 30, fontWeight: FontWeight.w900,
+              color: Color(0xFF1A1A1A))),
           Row(children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
                   color: const Color(0xFF2DB144).withOpacity(0.12),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: const Color(0xFF2DB144).withOpacity(0.35))),
+                  border: Border.all(
+                      color: const Color(0xFF2DB144).withOpacity(0.35))),
               child: Text('$active Active', style: const TextStyle(
-                  color: Color(0xFF2DB144), fontSize: 12, fontWeight: FontWeight.w700)),
+                  color: Color(0xFF2DB144), fontSize: 12,
+                  fontWeight: FontWeight.w700)),
             ),
             const SizedBox(width: 8),
             GestureDetector(
               onTap: () => _load(initial: false, silent: false),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                       colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]),
@@ -678,7 +763,8 @@ class _AuctionContentState extends State<AuctionContent>
                   Icon(Icons.refresh_rounded, size: 15, color: Colors.white),
                   SizedBox(width: 5),
                   Text('Refresh', style: TextStyle(
-                      color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
+                      color: Colors.white, fontSize: 12,
+                      fontWeight: FontWeight.w800)),
                 ]),
               ),
             ),
@@ -693,7 +779,8 @@ class _AuctionContentState extends State<AuctionContent>
               const SizedBox(width: 5),
               Text('Live · updated $updatedStr',
                   style: TextStyle(fontSize: 11,
-                      color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+                      color: Colors.grey.shade500,
+                      fontWeight: FontWeight.w500)),
             ]),
           ),
         const SizedBox(height: 8),
@@ -717,14 +804,16 @@ class _AuctionContentState extends State<AuctionContent>
           onTap: () => setState(() => _filter = f),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 14, vertical: 7),
             decoration: BoxDecoration(
                 gradient: sel ? const LinearGradient(
-                    colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]) : null,
+                    colors: [Color(0xFF2DB144),
+                      Color(0xFF1E8E32)]) : null,
                 color: sel ? null : Colors.grey.shade100,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: sel ? const Color(0xFF2DB144) : Colors.grey.shade300)),
+                border: Border.all(color: sel
+                    ? const Color(0xFF2DB144) : Colors.grey.shade300)),
             child: Text('$f ($cnt)', style: TextStyle(
                 fontSize: 12, fontWeight: FontWeight.w700,
                 color: sel ? Colors.white : Colors.grey.shade600)),
@@ -734,17 +823,17 @@ class _AuctionContentState extends State<AuctionContent>
     ),
   );
 
-  Color _statusColor(String s) => s == 'ACTIVE'
-      ? const Color(0xFF2DB144) : s == 'PENDING'
-      ? const Color(0xFFD4A017) : s == 'CLOSED'
-      ? Colors.redAccent : Colors.grey;
+  Color _statusColor(String s) =>
+      s == 'ACTIVE'  ? const Color(0xFF2DB144)
+          : s == 'PENDING' ? const Color(0xFFD4A017)
+          : s == 'CLOSED'  ? Colors.redAccent
+          : Colors.grey;
 
   Widget _buildCard(AuctionModel a, int idx) {
     final isActive = a.status == 'ACTIVE';
     final isClosed = a.status == 'CLOSED';
     final sc       = _statusColor(a.status);
 
-    // ── CHANGED: pull full record so we can display price/qty ──
     final myBid        = _bidRecords[a.auctionId];
     final hasPlacedBid = myBid != null;
 
@@ -752,8 +841,10 @@ class _AuctionContentState extends State<AuctionContent>
       tween: Tween(begin: 0, end: 1),
       duration: Duration(milliseconds: 300 + idx * 80),
       curve: Curves.easeOut,
-      builder: (ctx, v, child) => Opacity(opacity: v,
-          child: Transform.translate(offset: Offset(0, 20*(1-v)), child: child)),
+      builder: (ctx, v, child) => Opacity(
+          opacity: v,
+          child: Transform.translate(
+              offset: Offset(0, 20 * (1 - v)), child: child)),
       child: Container(
         margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
         decoration: BoxDecoration(
@@ -763,199 +854,258 @@ class _AuctionContentState extends State<AuctionContent>
           boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.07),
               blurRadius: 12, offset: const Offset(0, 4))],
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
 
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Expanded(child: Text(a.category, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
-                      color: Color(0xFFD4A017), letterSpacing: 0.5))),
-              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(child: Text(a.category,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFD4A017),
+                              letterSpacing: 0.5))),
+                      const SizedBox(width: 8),
+                      if (hasPlacedBid && isActive) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                              color: Colors.blueAccent.withOpacity(0.10),
+                              borderRadius: BorderRadius.circular(7),
+                              border: Border.all(
+                                  color: Colors.blueAccent.withOpacity(0.4))),
+                          child: Row(children: [
+                            const Icon(Icons.check_circle_outline_rounded,
+                                size: 10, color: Colors.blueAccent),
+                            const SizedBox(width: 3),
+                            Text('MY BID  ${myBid.formattedPrice}',
+                                style: const TextStyle(fontSize: 9,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.blueAccent,
+                                    letterSpacing: 0.4)),
+                          ]),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      _statusBadge(a.status),
+                    ]),
+              ),
 
-              // ── CHANGED: badge now shows price instead of plain text ──
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+                child: Text(a.auctionTitle, style: const TextStyle(
+                    fontSize: 18, fontWeight: FontWeight.w900,
+                    color: Color(0xFF1A1A1A))),
+              ),
+              if (a.description != null)
+                Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: Text(a.description!, maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500)))
+              else
+                const SizedBox(height: 10),
+
+              _AuctionCountdown(auction: a),
+              const SizedBox(height: 10),
+
+              // CHANGED: uses null-safe getters; MAX BID now shows
+              // effectiveMaxPrice (maximumBidPrice ?? maxBidAmount)
+              Container(
+                margin: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFF5F0E8),
+                    borderRadius: BorderRadius.circular(14)),
+                child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _statItem('VOLUME', a.formattedTotalVolume),
+                      _statDiv(),
+                      _statItem('MIN BID', a.formattedMinBid),
+                      _statDiv(),
+                      _statItem('MAX BID', a.formattedEffectiveMaxPrice),
+                      _statDiv(),
+                      _statItem(
+                        a.isCommodityAuction ? 'RESERVE' : 'COUPON',
+                        a.isCommodityAuction
+                            ? a.formattedReservePrice
+                            : a.formattedCouponRate,
+                      ),
+                    ]),
+              ),
+
+              if (a.isCommodityAuction && a.currentHighestBid != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 9),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFF1A1A1A).withOpacity(0.04),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                            color: const Color(0xFF2DB144).withOpacity(0.3))),
+                    child: Row(children: [
+                      const Icon(Icons.trending_up_rounded,
+                          size: 16, color: Color(0xFF2DB144)),
+                      const SizedBox(width: 8),
+                      Text('Highest Bid: ${a.formattedHighestBid}',
+                          style: const TextStyle(fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF2DB144))),
+                    ]),
+                  ),
+                ),
+
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('BID RANGE', style: TextStyle(fontSize: 10,
+                          color: Colors.grey.shade500,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.5)),
+                      // CHANGED: null-safe
+                      Text(
+                        '${a.formattedMinBid} – ${a.formattedEffectiveMaxPrice}'
+                            '  ·  +${a.formattedBidIncrement} step',
+                        style: const TextStyle(fontSize: 11,
+                            color: Color(0xFFD4A017),
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ]),
+              ),
+
               if (hasPlacedBid && isActive) ...[
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 9),
                   decoration: BoxDecoration(
-                      color: Colors.blueAccent.withOpacity(0.10),
-                      borderRadius: BorderRadius.circular(7),
-                      border: Border.all(color: Colors.blueAccent.withOpacity(0.4))),
+                    color: Colors.blueAccent.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                        color: Colors.blueAccent.withOpacity(0.25)),
+                  ),
                   child: Row(children: [
-                    const Icon(Icons.check_circle_outline_rounded,
-                        size: 10, color: Colors.blueAccent),
-                    const SizedBox(width: 3),
+                    const Icon(Icons.how_to_vote_rounded,
+                        size: 13, color: Colors.blueAccent),
+                    const SizedBox(width: 8),
+                    Text('My Bid', style: TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w700,
+                        color: Colors.blueAccent.withOpacity(0.75))),
+                    const Spacer(),
                     Text(
-                      'MY BID  ${myBid.formattedPrice}',
-                      style: const TextStyle(fontSize: 9,
-                          fontWeight: FontWeight.w800, color: Colors.blueAccent,
-                          letterSpacing: 0.4),
+                      '${myBid.formattedPrice}  ×  '
+                          '${myBid.formattedQuantity} qty',
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w900,
+                          color: Colors.blueAccent),
                     ),
                   ]),
                 ),
-                const SizedBox(width: 6),
               ],
-              _statusBadge(a.status),
-            ]),
-          ),
 
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
-            child: Text(a.auctionTitle, style: const TextStyle(
-                fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
-          ),
-          if (a.description != null)
-            Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                child: Text(a.description!, maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500)))
-          else const SizedBox(height: 10),
+              const SizedBox(height: 12),
 
-          _AuctionCountdown(auction: a),
-          const SizedBox(height: 10),
-
-          Container(
-            margin: const EdgeInsets.fromLTRB(12, 0, 12, 0),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            decoration: BoxDecoration(color: const Color(0xFFF5F0E8),
-                borderRadius: BorderRadius.circular(14)),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              _statItem('VOLUME', a.formattedTotalVolume), _statDiv(),
-              _statItem('MIN BID', a.formattedMinBid), _statDiv(),
-              _statItem('MAX BID', a.formattedMaxBid), _statDiv(),
-              _statItem(a.isCommodityAuction ? 'RESERVE' : 'COUPON',
-                  a.isCommodityAuction ? a.formattedReservePrice : a.formattedCouponRate),
-            ]),
-          ),
-
-          if (a.isCommodityAuction && a.currentHighestBid != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                decoration: BoxDecoration(
-                    color: const Color(0xFF1A1A1A).withOpacity(0.04),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF2DB144).withOpacity(0.3))),
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+                decoration: BoxDecoration(border: Border(
+                    top: BorderSide(color: Colors.grey.shade100))),
                 child: Row(children: [
-                  const Icon(Icons.trending_up_rounded, size: 16,
-                      color: Color(0xFF2DB144)),
-                  const SizedBox(width: 8),
-                  Text('Highest Bid: ${a.formattedHighestBid}',
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800,
-                          color: Color(0xFF2DB144))),
+                  const Spacer(),
+                  if (isClosed) ...[
+                    GestureDetector(
+                      onTap: () => _showDetails(a),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 9),
+                        decoration: BoxDecoration(
+                            color: Colors.redAccent.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                                color: Colors.redAccent.withOpacity(0.4),
+                                width: 1.5)),
+                        child: const Text('Results', style: TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w700,
+                            color: Colors.redAccent)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  GestureDetector(
+                    onTap: () => _showDetails(a),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 9),
+                      decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                              color: const Color(0xFFD4A017).withOpacity(0.5),
+                              width: 1.5)),
+                      child: const Text('Details', style: TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w700,
+                          color: Color(0xFFD4A017))),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  GestureDetector(
+                    onTap: isActive ? () => _openBidSheet(a) : null,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 9),
+                      decoration: BoxDecoration(
+                        gradient: isActive && !hasPlacedBid
+                            ? const LinearGradient(colors: [
+                          Color(0xFF2DB144), Color(0xFF1E8E32)]) : null,
+                        color: isActive && hasPlacedBid
+                            ? Colors.blueAccent.withOpacity(0.10)
+                            : (!isActive ? Colors.grey.shade300 : null),
+                        borderRadius: BorderRadius.circular(10),
+                        border: isActive && hasPlacedBid
+                            ? Border.all(
+                            color: Colors.blueAccent.withOpacity(0.6),
+                            width: 1.5) : null,
+                        boxShadow: isActive && !hasPlacedBid ? [BoxShadow(
+                            color: const Color(0xFF2DB144).withOpacity(0.35),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3))] : [],
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        if (isActive && hasPlacedBid) ...[
+                          const Icon(Icons.edit_rounded,
+                              size: 13, color: Colors.blueAccent),
+                          const SizedBox(width: 5),
+                        ],
+                        Text(
+                          isActive
+                              ? (hasPlacedBid ? 'EDIT BID' : 'PLACE BID')
+                              : 'PLACE BID',
+                          style: TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w800,
+                              letterSpacing: 0.5,
+                              color: isActive
+                                  ? (hasPlacedBid
+                                  ? Colors.blueAccent : Colors.white)
+                                  : Colors.grey.shade500),
+                        ),
+                      ]),
+                    ),
+                  ),
                 ]),
               ),
-            ),
-
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text('BID RANGE', style: TextStyle(fontSize: 10,
-                  color: Colors.grey.shade500, fontWeight: FontWeight.w600,
-                  letterSpacing: 0.5)),
-              Text('${a.formattedMinBid} – ${a.formattedMaxBid}  ·  +${a.formattedBidIncrement} step',
-                  style: const TextStyle(fontSize: 11, color: Color(0xFFD4A017),
-                      fontWeight: FontWeight.w700)),
             ]),
-          ),
-
-          // ── NEW: my bid strip — price × quantity shown when bid exists ──
-          if (hasPlacedBid && isActive) ...[
-            Container(
-              margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-              decoration: BoxDecoration(
-                color: Colors.blueAccent.withOpacity(0.06),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.blueAccent.withOpacity(0.25)),
-              ),
-              child: Row(children: [
-                const Icon(Icons.how_to_vote_rounded, size: 13, color: Colors.blueAccent),
-                const SizedBox(width: 8),
-                Text('My Bid', style: TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w700,
-                    color: Colors.blueAccent.withOpacity(0.75))),
-                const Spacer(),
-                Text(
-                  '${myBid.formattedPrice}  ×  ${myBid.formattedQuantity} qty',
-                  style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w900,
-                      color: Colors.blueAccent),
-                ),
-              ]),
-            ),
-          ],
-
-          const SizedBox(height: 12),
-
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-            decoration: BoxDecoration(
-                border: Border(top: BorderSide(color: Colors.grey.shade100))),
-            child: Row(children: [
-              const Spacer(),
-              if (isClosed) ...[
-                GestureDetector(onTap: () => _showDetails(a), child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                  decoration: BoxDecoration(
-                      color: Colors.redAccent.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.redAccent.withOpacity(0.4), width: 1.5)),
-                  child: const Text('Results', style: TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w700, color: Colors.redAccent)),
-                )),
-                const SizedBox(width: 8),
-              ],
-              GestureDetector(onTap: () => _showDetails(a), child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                decoration: BoxDecoration(
-                    color: Colors.white, borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: const Color(0xFFD4A017).withOpacity(0.5), width: 1.5)),
-                child: const Text('Details', style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFD4A017))),
-              )),
-              const SizedBox(width: 10),
-
-              GestureDetector(
-                onTap: isActive ? () => _openBidSheet(a) : null,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-                  decoration: BoxDecoration(
-                    gradient: isActive && !hasPlacedBid
-                        ? const LinearGradient(
-                        colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]) : null,
-                    color: isActive && hasPlacedBid
-                        ? Colors.blueAccent.withOpacity(0.10)
-                        : (!isActive ? Colors.grey.shade300 : null),
-                    borderRadius: BorderRadius.circular(10),
-                    border: isActive && hasPlacedBid
-                        ? Border.all(color: Colors.blueAccent.withOpacity(0.6), width: 1.5) : null,
-                    boxShadow: isActive && !hasPlacedBid ? [BoxShadow(
-                        color: const Color(0xFF2DB144).withOpacity(0.35),
-                        blurRadius: 8, offset: const Offset(0, 3))] : [],
-                  ),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    if (isActive && hasPlacedBid) ...[
-                      const Icon(Icons.edit_rounded, size: 13, color: Colors.blueAccent),
-                      const SizedBox(width: 5),
-                    ],
-                    Text(
-                      isActive ? (hasPlacedBid ? 'EDIT BID' : 'PLACE BID') : 'PLACE BID',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800,
-                          letterSpacing: 0.5,
-                          color: isActive
-                              ? (hasPlacedBid ? Colors.blueAccent : Colors.white)
-                              : Colors.grey.shade500),
-                    ),
-                  ]),
-                ),
-              ),
-            ]),
-          ),
-        ]),
       ),
     );
   }
@@ -964,24 +1114,26 @@ class _AuctionContentState extends State<AuctionContent>
     final c = _statusColor(s);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: c.withOpacity(0.12),
+      decoration: BoxDecoration(
+          color: c.withOpacity(0.12),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: c.withOpacity(0.4))),
-      child: Text(s, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
-          color: c, letterSpacing: 0.5)),
+      child: Text(s, style: TextStyle(fontSize: 11,
+          fontWeight: FontWeight.w800, color: c, letterSpacing: 0.5)),
     );
   }
 
-  Widget _statItem(String l, String v) => Column(
-      crossAxisAlignment: CrossAxisAlignment.start, children: [
-    Text(l, style: TextStyle(fontSize: 9, color: Colors.grey.shade500,
-        fontWeight: FontWeight.w600, letterSpacing: 0.3)),
-    const SizedBox(height: 4),
-    Text(v, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900,
-        color: Color(0xFF1A1A1A))),
-  ]);
+  Widget _statItem(String l, String v) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(l, style: TextStyle(fontSize: 9, color: Colors.grey.shade500,
+            fontWeight: FontWeight.w600, letterSpacing: 0.3)),
+        const SizedBox(height: 4),
+        Text(v, style: const TextStyle(fontSize: 13,
+            fontWeight: FontWeight.w900, color: Color(0xFF1A1A1A))),
+      ]);
 
-  Widget _statDiv() => Container(width: 1, height: 28, color: Colors.grey.shade300);
+  Widget _statDiv() =>
+      Container(width: 1, height: 28, color: Colors.grey.shade300);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -994,9 +1146,9 @@ class _PlaceBidSheet extends StatefulWidget {
 }
 
 class _PlaceBidSheetState extends State<_PlaceBidSheet> {
-  bool             _loading      = true;
-  bool             _submitting   = false;
-  bool             _success      = false;
+  bool             _loading    = true;
+  bool             _submitting = false;
+  bool             _success    = false;
   String?          _error;
   PlacedBidRecord? _existing;
 
@@ -1017,7 +1169,8 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     setState(() {
       _clientCode = prefs.getString('user_cds')  ?? 'DEFAULT';
       _clientName = prefs.getString('user_name') ?? 'Default Client';
-      _existing = (existing != null && existing.bidId != null) ? existing : null;
+      _existing = (existing != null && existing.bidId != null)
+          ? existing : null;
       if (_existing != null) {
         _priceCtrl.text = _existing!.bidPrice.toStringAsFixed(2);
         _qtyCtrl.text   = _existing!.bidQuantity.toString();
@@ -1036,8 +1189,14 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
       _amount > 0 ? '\$${_amount.toStringAsFixed(2)}' : 'Auto-calculated';
 
   Future<void> _submit() async {
-    if (_price <= 0) { setState(() => _error = 'Enter a valid bid price.'); return; }
-    if (_qty   <= 0) { setState(() => _error = 'Enter a valid quantity.');  return; }
+    if (_price <= 0) {
+      setState(() => _error = 'Enter a valid bid price.');
+      return;
+    }
+    if (_qty <= 0) {
+      setState(() => _error = 'Enter a valid quantity.');
+      return;
+    }
     setState(() { _submitting = true; _error = null; });
     try {
       if (_editMode) {
@@ -1080,9 +1239,11 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
 
   @override
   Widget build(BuildContext context) => Container(
-    decoration: const BoxDecoration(color: Color(0xFF1A1A1A),
+    decoration: const BoxDecoration(
+        color: Color(0xFF1A1A1A),
         borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
-    padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+    padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
         top: 8, left: 20, right: 20),
     child: SingleChildScrollView(
       child: _loading ? _sheetLoading()
@@ -1094,52 +1255,65 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
   Widget _sheetLoading() => SizedBox(height: 180, child: Column(
       mainAxisAlignment: MainAxisAlignment.center, children: [
     _handle(), const SizedBox(height: 28),
-    const CircularProgressIndicator(color: Color(0xFF2DB144), strokeWidth: 2),
+    const CircularProgressIndicator(
+        color: Color(0xFF2DB144), strokeWidth: 2),
   ]));
 
-  Widget _buildSuccess() => Column(mainAxisSize: MainAxisSize.min, children: [
-    _handle(), const SizedBox(height: 30),
-    Container(
-        width: 72, height: 72,
-        decoration: BoxDecoration(
-            gradient: LinearGradient(colors: _editMode
-                ? [Colors.blueAccent, Colors.blue.shade700]
-                : [const Color(0xFF2DB144), const Color(0xFF1E8E32)]),
-            shape: BoxShape.circle,
-            boxShadow: [BoxShadow(
-                color: (_editMode ? Colors.blueAccent : const Color(0xFF2DB144)).withOpacity(0.4),
-                blurRadius: 20)]),
-        child: Icon(_editMode ? Icons.edit_rounded : Icons.check_rounded,
-            color: Colors.white, size: 34)),
-    const SizedBox(height: 20),
-    Text(_editMode ? 'Bid Updated!' : 'Bid Submitted!',
-        style: const TextStyle(color: Colors.white, fontSize: 24,
-            fontWeight: FontWeight.w900)),
-    const SizedBox(height: 10),
-    Text(
-        _editMode
-            ? 'Your bid has been updated for\n${widget.auction.auctionTitle}'
-            : 'Your bid has been placed for\n${widget.auction.auctionTitle}',
-        textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.white.withOpacity(0.55), fontSize: 14, height: 1.5)),
-    const SizedBox(height: 30),
-    GestureDetector(onTap: () => Navigator.pop(context), child: Container(
-      width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 15),
-      decoration: BoxDecoration(
-          gradient: LinearGradient(colors: _editMode
-              ? [Colors.blueAccent, Colors.blue.shade700]
-              : [const Color(0xFF2DB144), const Color(0xFF1E8E32)]),
-          borderRadius: BorderRadius.circular(14)),
-      child: const Text('Done', textAlign: TextAlign.center,
-          style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w900)),
-    )),
-    const SizedBox(height: 8),
-  ]);
+  Widget _buildSuccess() =>
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        _handle(), const SizedBox(height: 30),
+        Container(
+            width: 72, height: 72,
+            decoration: BoxDecoration(
+                gradient: LinearGradient(colors: _editMode
+                    ? [Colors.blueAccent, Colors.blue.shade700]
+                    : [const Color(0xFF2DB144), const Color(0xFF1E8E32)]),
+                shape: BoxShape.circle,
+                boxShadow: [BoxShadow(
+                    color: (_editMode ? Colors.blueAccent
+                        : const Color(0xFF2DB144)).withOpacity(0.4),
+                    blurRadius: 20)]),
+            child: Icon(
+                _editMode ? Icons.edit_rounded : Icons.check_rounded,
+                color: Colors.white, size: 34)),
+        const SizedBox(height: 20),
+        Text(_editMode ? 'Bid Updated!' : 'Bid Submitted!',
+            style: const TextStyle(color: Colors.white, fontSize: 24,
+                fontWeight: FontWeight.w900)),
+        const SizedBox(height: 10),
+        Text(
+            _editMode
+                ? 'Your bid has been updated for\n'
+                '${widget.auction.auctionTitle}'
+                : 'Your bid has been placed for\n'
+                '${widget.auction.auctionTitle}',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white.withOpacity(0.55),
+                fontSize: 14, height: 1.5)),
+        const SizedBox(height: 30),
+        GestureDetector(
+          onTap: () => Navigator.pop(context),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            decoration: BoxDecoration(
+                gradient: LinearGradient(colors: _editMode
+                    ? [Colors.blueAccent, Colors.blue.shade700]
+                    : [const Color(0xFF2DB144), const Color(0xFF1E8E32)]),
+                borderRadius: BorderRadius.circular(14)),
+            child: const Text('Done', textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white, fontSize: 15,
+                    fontWeight: FontWeight.w900)),
+          ),
+        ),
+        const SizedBox(height: 8),
+      ]);
 
   Widget _buildForm() {
-    final a = widget.auction;
+    final a        = widget.auction;
     final isActive = a.status == 'ACTIVE';
-    final titleColor = _editMode ? Colors.blueAccent : const Color(0xFFD4A017);
+    final titleColor =
+    _editMode ? Colors.blueAccent : const Color(0xFFD4A017);
 
     return Column(mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1153,13 +1327,17 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
             if (_editMode) ...[
               const SizedBox(width: 10),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 9, vertical: 4),
                 decoration: BoxDecoration(
                     color: Colors.blueAccent.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blueAccent.withOpacity(0.4))),
-                child: const Text('UPDATING EXISTING BID', style: TextStyle(fontSize: 9,
-                    fontWeight: FontWeight.w800, color: Colors.blueAccent, letterSpacing: 0.5)),
+                    border: Border.all(
+                        color: Colors.blueAccent.withOpacity(0.4))),
+                child: const Text('UPDATING EXISTING BID',
+                    style: TextStyle(fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.blueAccent, letterSpacing: 0.5)),
               ),
             ],
           ]),
@@ -1175,23 +1353,33 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
               decoration: BoxDecoration(
                   color: Colors.blueAccent.withOpacity(0.06),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.blueAccent.withOpacity(0.25))),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  const Icon(Icons.history_rounded, size: 13, color: Colors.blueAccent),
-                  const SizedBox(width: 6),
-                  const Text('YOUR PREVIOUS BID', style: TextStyle(fontSize: 10,
-                      fontWeight: FontWeight.w800, color: Colors.blueAccent, letterSpacing: 0.5)),
-                ]),
-                const SizedBox(height: 10),
-                Row(children: [
-                  Expanded(child: _prevStat('PRICE', _existing!.formattedPrice)),
-                  Container(width: 1, height: 28,
-                      color: Colors.white.withOpacity(0.08),
-                      margin: const EdgeInsets.symmetric(horizontal: 12)),
-                  Expanded(child: _prevStat('QUANTITY', _existing!.formattedQuantity)),
-                ]),
-              ]),
+                  border: Border.all(
+                      color: Colors.blueAccent.withOpacity(0.25))),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Icon(Icons.history_rounded,
+                          size: 13, color: Colors.blueAccent),
+                      const SizedBox(width: 6),
+                      const Text('YOUR PREVIOUS BID',
+                          style: TextStyle(fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.blueAccent,
+                              letterSpacing: 0.5)),
+                    ]),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Expanded(child: _prevStat(
+                          'PRICE', _existing!.formattedPrice)),
+                      Container(width: 1, height: 28,
+                          color: Colors.white.withOpacity(0.08),
+                          margin: const EdgeInsets.symmetric(
+                              horizontal: 12)),
+                      Expanded(child: _prevStat(
+                          'QUANTITY', _existing!.formattedQuantity)),
+                    ]),
+                  ]),
             ),
           ],
 
@@ -1200,36 +1388,63 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
             decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.05),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFD4A017).withOpacity(0.25))),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(a.auctionCode, style: const TextStyle(color: Color(0xFFD4A017),
-                  fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+                border: Border.all(
+                    color: const Color(0xFFD4A017).withOpacity(0.25))),
+            child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(a.auctionCode, style: const TextStyle(
+                  color: Color(0xFFD4A017), fontSize: 12,
+                  fontWeight: FontWeight.w700, letterSpacing: 0.5)),
               const SizedBox(height: 4),
-              Text(a.auctionTitle, style: const TextStyle(color: Colors.white,
-                  fontSize: 16, fontWeight: FontWeight.w900)),
+              Text(a.auctionTitle, style: const TextStyle(
+                  color: Colors.white, fontSize: 16,
+                  fontWeight: FontWeight.w900)),
               const SizedBox(height: 6),
-              Text('Min: ${a.formattedMinBid}  |  Max: ${a.formattedMaxBid}  |  Step: ${a.formattedBidIncrement}',
-                  style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.55))),
+              // CHANGED: null-safe using formatted getters
+              Text(
+                'Min: ${a.formattedMinBid}  |  '
+                    'Max: ${a.formattedEffectiveMaxPrice}  |  '
+                    'Step: ${a.formattedBidIncrement}',
+                style: TextStyle(fontSize: 12,
+                    color: Colors.white.withOpacity(0.55)),
+              ),
               if (a.isCommodityAuction && a.reservePrice != null) ...[
                 const SizedBox(height: 4),
-                Text('Reserve: ${a.formattedReservePrice}  |  Volume: ${a.formattedTotalVolume}',
-                    style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.55))),
+                Text(
+                  'Reserve: ${a.formattedReservePrice}  |  '
+                      'Volume: ${a.formattedTotalVolume}',
+                  style: TextStyle(fontSize: 12,
+                      color: Colors.white.withOpacity(0.55)),
+                ),
+              ],
+              // NEW: show maximumBidPrice when it differs from maxBidAmount
+              if (a.maximumBidPrice != null &&
+                  a.maximumBidPrice != a.maxBidAmount) ...[
+                const SizedBox(height: 4),
+                Text('Max Price Cap: ${a.formattedMaximumBidPrice}',
+                    style: TextStyle(fontSize: 12,
+                        color: const Color(0xFFD4A017).withOpacity(0.85))),
               ],
               if (a.lotNumber != null) ...[
                 const SizedBox(height: 4),
                 Text('Lot: ${a.lotNumber}',
-                    style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.55))),
+                    style: TextStyle(fontSize: 12,
+                        color: Colors.white.withOpacity(0.55))),
               ],
               if (a.currentHighestBid != null) ...[
                 const SizedBox(height: 10),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                       color: const Color(0xFF2DB144).withOpacity(0.12),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF2DB144).withOpacity(0.35))),
-                  child: Text('Current Highest: ${a.formattedHighestBid}',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800,
+                      border: Border.all(
+                          color: const Color(0xFF2DB144).withOpacity(0.35))),
+                  child: Text(
+                      'Current Highest: ${a.formattedHighestBid}',
+                      style: const TextStyle(fontSize: 12,
+                          fontWeight: FontWeight.w800,
                           color: Color(0xFF2DB144))),
                 ),
               ],
@@ -1242,33 +1457,44 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(14),
+                color: Colors.white.withOpacity(0.04),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: Colors.white.withOpacity(0.1))),
             child: _infoRow('Client Code', _clientCode),
           ),
 
           const SizedBox(height: 18),
           _secLabel('BID PRICE'), const SizedBox(height: 8),
-          _field(controller: _priceCtrl, hint: 'Enter bid price',
+          _field(
+              controller: _priceCtrl,
+              hint: 'Enter bid price',
               type: const TextInputType.numberWithOptions(decimal: true),
               onChange: (_) => setState(() {})),
 
           const SizedBox(height: 18),
-          _secLabel(a.isCommodityAuction ? 'QUANTITY (TONNES)' : 'QUANTITY'),
+          _secLabel(a.isCommodityAuction
+              ? 'QUANTITY (TONNES)' : 'QUANTITY'),
           const SizedBox(height: 8),
-          _field(controller: _qtyCtrl, hint: 'Enter quantity',
-              type: TextInputType.number, onChange: (_) => setState(() {})),
+          _field(
+              controller: _qtyCtrl,
+              hint: 'Enter quantity',
+              type: TextInputType.number,
+              onChange: (_) => setState(() {})),
 
           const SizedBox(height: 18),
           _secLabel('BID AMOUNT'), const SizedBox(height: 8),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 16),
             decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(14),
+                color: Colors.white.withOpacity(0.04),
+                borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: Colors.white.withOpacity(0.1))),
-            child: Text(_dispAmt, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800,
-                color: _amount > 0 ? const Color(0xFF2DB144) : Colors.white38)),
+            child: Text(_dispAmt,
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800,
+                    color: _amount > 0
+                        ? const Color(0xFF2DB144) : Colors.white38)),
           ),
 
           if (_error != null) ...[
@@ -1276,10 +1502,13 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                  color: Colors.redAccent.withOpacity(0.1), borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.redAccent.withOpacity(0.4))),
+                  color: Colors.redAccent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: Colors.redAccent.withOpacity(0.4))),
               child: Row(children: [
-                const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 18),
+                const Icon(Icons.error_outline_rounded,
+                    color: Colors.redAccent, size: 18),
                 const SizedBox(width: 10),
                 Expanded(child: Text(_error!, style: const TextStyle(
                     color: Colors.redAccent, fontSize: 13))),
@@ -1290,75 +1519,91 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
           const SizedBox(height: 28),
 
           Row(children: [
-            Expanded(child: GestureDetector(onTap: () => Navigator.pop(context),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 15),
-                  decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08), borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.white.withOpacity(0.15))),
-                  child: const Text('Cancel', textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70, fontSize: 15,
-                          fontWeight: FontWeight.w700)),
-                ))),
+            Expanded(child: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: Colors.white.withOpacity(0.15))),
+                child: const Text('Cancel', textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white70, fontSize: 15,
+                        fontWeight: FontWeight.w700)),
+              ),
+            )),
             const SizedBox(width: 12),
-            Expanded(flex: 2,
-                child: GestureDetector(
-                  onTap: (isActive && !_submitting) ? _submit : null,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.symmetric(vertical: 15),
-                    decoration: BoxDecoration(
-                        gradient: isActive ? LinearGradient(colors: _editMode
-                            ? [Colors.blueAccent, Colors.blue.shade700]
-                            : [const Color(0xFF2DB144), const Color(0xFF1E8E32)]) : null,
-                        color: isActive ? null : Colors.grey.shade700,
-                        borderRadius: BorderRadius.circular(14),
-                        boxShadow: isActive ? [BoxShadow(
-                            color: (_editMode ? Colors.blueAccent : const Color(0xFF2DB144))
-                                .withOpacity(0.4),
-                            blurRadius: 12, offset: const Offset(0, 4))] : []),
-                    child: _submitting
-                        ? const Center(child: SizedBox(width: 20, height: 20,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)))
-                        : Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Expanded(flex: 2, child: GestureDetector(
+              onTap: (isActive && !_submitting) ? _submit : null,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                decoration: BoxDecoration(
+                    gradient: isActive ? LinearGradient(colors: _editMode
+                        ? [Colors.blueAccent, Colors.blue.shade700]
+                        : [const Color(0xFF2DB144),
+                      const Color(0xFF1E8E32)]) : null,
+                    color: isActive ? null : Colors.grey.shade700,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: isActive ? [BoxShadow(
+                        color: (_editMode ? Colors.blueAccent
+                            : const Color(0xFF2DB144)).withOpacity(0.4),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4))] : []),
+                child: _submitting
+                    ? const Center(child: SizedBox(width: 20, height: 20,
+                    child: CircularProgressIndicator(
+                        color: Colors.white, strokeWidth: 2)))
+                    : Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
                       if (_editMode) ...[
-                        const Icon(Icons.edit_rounded, size: 15, color: Colors.white),
+                        const Icon(Icons.edit_rounded,
+                            size: 15, color: Colors.white),
                         const SizedBox(width: 6),
                       ],
                       Text(_editMode ? 'Update Bid' : 'Submit Bid',
-                          style: const TextStyle(color: Colors.white, fontSize: 15,
-                              fontWeight: FontWeight.w900, letterSpacing: 0.5)),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.5)),
                     ]),
-                  ),
-                )),
+              ),
+            )),
           ]),
         ]);
   }
 
   Widget _handle() => Center(child: Container(
       width: 40, height: 4, margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.2),
+      decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.2),
           borderRadius: BorderRadius.circular(2))));
 
   Widget _prevStat(String l, String v) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(l, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700,
-            color: Colors.blueAccent.withOpacity(0.65), letterSpacing: 0.4)),
+            color: Colors.blueAccent.withOpacity(0.65),
+            letterSpacing: 0.4)),
         const SizedBox(height: 4),
-        Text(v, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900,
-            color: Colors.white)),
+        Text(v, style: const TextStyle(fontSize: 15,
+            fontWeight: FontWeight.w900, color: Colors.white)),
       ]);
 
   Widget _infoRow(String l, String v) => Row(children: [
-    Text('$l:', style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.45))),
+    Text('$l:', style: TextStyle(fontSize: 12,
+        color: Colors.white.withOpacity(0.45))),
     const SizedBox(width: 8),
-    Expanded(child: Text(v.isNotEmpty ? v : '—', overflow: TextOverflow.ellipsis,
+    Expanded(child: Text(v.isNotEmpty ? v : '—',
+        overflow: TextOverflow.ellipsis,
         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
             color: Colors.white))),
   ]);
 
   Widget _secLabel(String l) => Text(l, style: const TextStyle(
-      color: Colors.white60, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.0));
+      color: Colors.white60, fontSize: 11,
+      fontWeight: FontWeight.w700, letterSpacing: 1.0));
 
   Widget _field({
     required TextEditingController controller,
@@ -1367,15 +1612,18 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     ValueChanged<String>? onChange,
   }) => Container(
     decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(14),
+        color: Colors.white.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white.withOpacity(0.1))),
     child: TextField(
       controller: controller, keyboardType: type, onChanged: onChange,
       style: const TextStyle(color: Colors.white, fontSize: 15),
       decoration: InputDecoration(
           hintText: hint, border: InputBorder.none,
-          hintStyle: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 15),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15)),
+          hintStyle: TextStyle(
+              color: Colors.white.withOpacity(0.3), fontSize: 15),
+          contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16, vertical: 15)),
     ),
   );
 }
@@ -1397,7 +1645,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
   String? _resultError;
   late TabController _tab;
 
-  // ── NEW: placed bid loaded from local store ──
   PlacedBidRecord? _myBid;
 
   bool get _isClosed => widget.auction.status == 'CLOSED';
@@ -1408,10 +1655,9 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     super.initState();
     _tab = TabController(length: _isClosed ? 2 : 1, vsync: this);
     if (_isClosed) _loadResults();
-    _loadMyBid(); // ── NEW ──
+    _loadMyBid();
   }
 
-  // ── NEW: load the stored bid for this auction ──
   Future<void> _loadMyBid() async {
     final r = await BidStore.load(widget.auction.auctionId);
     if (mounted) setState(() => _myBid = r);
@@ -1432,9 +1678,10 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     }
   }
 
-  Color _sc(String s) => s == 'ACTIVE' ? const Color(0xFF2DB144)
-      : s == 'PENDING' ? const Color(0xFFD4A017)
-      : s == 'CLOSED'  ? Colors.redAccent : Colors.grey;
+  Color _sc(String s) =>
+      s == 'ACTIVE'  ? const Color(0xFF2DB144)
+          : s == 'PENDING' ? const Color(0xFFD4A017)
+          : s == 'CLOSED'  ? Colors.redAccent : Colors.grey;
 
   @override
   Widget build(BuildContext context) {
@@ -1445,15 +1692,18 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Row(children: [
-            GestureDetector(onTap: () => Navigator.pop(context),
-                child: Container(width: 40, height: 40,
-                    decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(12)),
-                    child: const Icon(Icons.arrow_back_ios_new_rounded,
-                        color: Colors.white, size: 18))),
+            GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(width: 40, height: 40,
+                  decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(12)),
+                  child: const Icon(Icons.arrow_back_ios_new_rounded,
+                      color: Colors.white, size: 18)),
+            ),
             const SizedBox(width: 14),
-            Expanded(child: Text(a.auctionTitle, overflow: TextOverflow.ellipsis,
+            Expanded(child: Text(a.auctionTitle,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: Colors.white, fontSize: 17,
                     fontWeight: FontWeight.w900))),
             const SizedBox(width: 8),
@@ -1470,30 +1720,34 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
               decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.06),
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: Colors.white.withOpacity(0.08))),
+                  border: Border.all(
+                      color: Colors.white.withOpacity(0.08))),
               child: TabBar(
                 controller: _tab,
                 indicator: BoxDecoration(
-                    gradient: const LinearGradient(
-                        colors: [Color(0xFF1A6B2A), Color(0xFF0F4D1D)]),
+                    gradient: const LinearGradient(colors: [
+                      Color(0xFF1A6B2A), Color(0xFF0F4D1D)]),
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: [BoxShadow(
-                        color: const Color(0xFF2DB144).withOpacity(0.3), blurRadius: 8)]),
+                        color: const Color(0xFF2DB144).withOpacity(0.3),
+                        blurRadius: 8)]),
                 indicatorSize: TabBarIndicatorSize.tab,
                 dividerColor: Colors.transparent,
                 labelColor: Colors.white,
                 unselectedLabelColor: Colors.white38,
-                labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800,
-                    letterSpacing: 0.3),
-                tabs: const [Tab(text: 'Information'), Tab(text: 'Results')],
+                labelStyle: const TextStyle(fontSize: 13,
+                    fontWeight: FontWeight.w800, letterSpacing: 0.3),
+                tabs: const [
+                  Tab(text: 'Information'), Tab(text: 'Results')],
               ),
             ),
           ),
-        ] else const SizedBox(height: 14),
+        ] else
+          const SizedBox(height: 14),
 
         Expanded(child: _isClosed
-            ? TabBarView(controller: _tab, children: [
-          _buildInfoTab(a), _buildResultsTab()])
+            ? TabBarView(controller: _tab,
+            children: [_buildInfoTab(a), _buildResultsTab()])
             : _buildInfoTab(a)),
       ])),
     );
@@ -1504,23 +1758,31 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     children: [
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(child: _card('AUCTION INFORMATION', [
-          _row('Code', a.auctionCode), _row('Type', a.auctionType),
+          _row('Code',       a.auctionCode),
+          _row('Type',       a.auctionType),
           if (a.lotNumber    != null) _row('Lot',      a.lotNumber!),
           if (a.securityType != null) _row('Security', a.securityType!),
           if (a.issuerName   != null) _row('Issuer',   a.issuerName!),
           _row('Allocation', a.allocationMethod),
-          _row('Status', a.status, vc: _sc(a.status)),
+          _row('Status',     a.status, vc: _sc(a.status)),
+          if (a.auctionDayDate != null) _row('Auction Day', a.auctionDayDate!),
         ])),
         const SizedBox(width: 12),
         Expanded(child: _card('VOLUME & PRICING', [
           _row('Total Volume', a.formattedTotalVolume),
-          _row('Min Bid', a.formattedMinBid),
-          _row('Max Bid', a.formattedMaxBid),
+          // CHANGED: null-safe
+          _row('Min Bid',  a.formattedMinBid),
+          _row('Max Bid',  a.formattedMaxBid),
+          // NEW: maximumBidPrice row when it exists
+          if (a.maximumBidPrice != null)
+            _row('Max Price Cap', a.formattedMaximumBidPrice,
+                vc: const Color(0xFFD4A017)),
           _row('Bid Step', a.formattedBidIncrement),
           if (a.isCommodityAuction) ...[
             _row('Reserve Price', a.formattedReservePrice),
-            _row('Highest Bid', a.formattedHighestBid,
-                vc: a.currentHighestBid != null ? const Color(0xFF2DB144) : null),
+            _row('Highest Bid',   a.formattedHighestBid,
+                vc: a.currentHighestBid != null
+                    ? const Color(0xFF2DB144) : null),
             _row('Extensions', '${a.totalExtensions}'),
           ] else ...[
             _row('Coupon Rate', a.formattedCouponRate),
@@ -1532,7 +1794,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
         ])),
       ]),
 
-      // ── NEW: my placed bid card, shown whenever a local record exists ──
       if (_myBid != null) ...[
         const SizedBox(height: 12),
         Container(
@@ -1540,55 +1801,73 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
           decoration: BoxDecoration(
             color: Colors.blueAccent.withOpacity(0.07),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.blueAccent.withOpacity(0.30)),
+            border: Border.all(
+                color: Colors.blueAccent.withOpacity(0.30)),
           ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const Row(children: [
-              Icon(Icons.how_to_vote_rounded, size: 13, color: Colors.blueAccent),
-              SizedBox(width: 7),
-              Text('MY PLACED BID', style: TextStyle(
-                  fontSize: 10, fontWeight: FontWeight.w800,
-                  color: Colors.blueAccent, letterSpacing: 0.8)),
-            ]),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: _row('Bid Price', _myBid!.formattedPrice,
-                  vc: Colors.blueAccent)),
-              Expanded(child: _row('Quantity', _myBid!.formattedQuantity,
-                  vc: Colors.white)),
-            ]),
-            _row('Submitted', _fDT(_myBid!.submittedAt),
-                vc: Colors.white.withOpacity(0.45)),
-            if (_myBid!.bidId != null)
-              _row('Bid ID', '#${_myBid!.bidId}',
-                  vc: Colors.white.withOpacity(0.35)),
-          ]),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(children: [
+                  Icon(Icons.how_to_vote_rounded,
+                      size: 13, color: Colors.blueAccent),
+                  SizedBox(width: 7),
+                  Text('MY PLACED BID', style: TextStyle(fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.blueAccent, letterSpacing: 0.8)),
+                ]),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(child: _row('Bid Price',
+                      _myBid!.formattedPrice, vc: Colors.blueAccent)),
+                  Expanded(child: _row('Quantity',
+                      _myBid!.formattedQuantity, vc: Colors.white)),
+                ]),
+                _row('Submitted', _fDT(_myBid!.submittedAt),
+                    vc: Colors.white.withOpacity(0.45)),
+                if (_myBid!.bidId != null)
+                  _row('Bid ID', '#${_myBid!.bidId}',
+                      vc: Colors.white.withOpacity(0.35)),
+              ]),
         ),
       ],
 
       const SizedBox(height: 12),
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(child: _card('TIMELINE', [
-          _row('Start', a.startDate), _row('End', a.endDate),
-          if (a.settlementDate != null) _row('Settlement', a.settlementDate!),
-          if (a.maturityDate   != null) _row('Maturity',   a.maturityDate!),
-          if (a.lastBidTime    != null) _row('Last Bid',   a.lastBidTime!),
+          _row('Start', a.startDate),
+          _row('End',   a.endDate),
+          // NEW: effective end when it differs from scheduled
+          if (a.currentEndTimeRaw != null &&
+              a.currentEndTimeRaw != a.endDateRaw)
+            _row('Effective End',
+                AuctionModel._fmtDT(
+                    a.currentEndTimeRaw!.toIso8601String()),
+                vc: const Color(0xFFD4A017)),
+          if (a.settlementDate != null)
+            _row('Settlement', a.settlementDate!),
+          if (a.maturityDate   != null)
+            _row('Maturity',   a.maturityDate!),
+          if (a.lastBidTime    != null)
+            _row('Last Bid',   a.lastBidTime!),
         ])),
         const SizedBox(width: 12),
         Expanded(child: _card('DESCRIPTION', [],
-            extra: Padding(padding: const EdgeInsets.only(top: 4),
+            extra: Padding(
+                padding: const EdgeInsets.only(top: 4),
                 child: Text(
                     a.description?.isNotEmpty == true
-                        ? a.description! : 'No description available.',
+                        ? a.description!
+                        : 'No description available.',
                     style: TextStyle(fontSize: 13,
-                        color: Colors.white.withOpacity(0.6), height: 1.5))))),
+                        color: Colors.white.withOpacity(0.6),
+                        height: 1.5))))),
       ]),
       const SizedBox(height: 20),
       if (_isActive)
         GestureDetector(
           onTap: () async {
             Navigator.pop(context);
-            await showModalBottomSheet(context: context, isScrollControlled: true,
+            await showModalBottomSheet(
+                context: context, isScrollControlled: true,
                 backgroundColor: Colors.transparent,
                 builder: (_) => _PlaceBidSheet(auction: a));
           },
@@ -1599,8 +1878,10 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
                   gradient: const LinearGradient(
                       colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]),
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: [BoxShadow(color: const Color(0xFF2DB144).withOpacity(0.4),
-                      blurRadius: 14, offset: const Offset(0, 6))]),
+                  boxShadow: [BoxShadow(
+                      color: const Color(0xFF2DB144).withOpacity(0.4),
+                      blurRadius: 14,
+                      offset: const Offset(0, 6))]),
               child: const Text('PLACE BID', textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white, fontSize: 16,
                       fontWeight: FontWeight.w900, letterSpacing: 1))),
@@ -1611,82 +1892,112 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
   Widget _buildResultsTab() {
     if (_loadingResult) return const Center(child: Column(
         mainAxisAlignment: MainAxisAlignment.center, children: [
-      CircularProgressIndicator(color: Color(0xFF2DB144), strokeWidth: 2),
+      CircularProgressIndicator(
+          color: Color(0xFF2DB144), strokeWidth: 2),
       SizedBox(height: 16),
-      Text('Fetching results...', style: TextStyle(color: Colors.white38, fontSize: 14)),
+      Text('Fetching results...',
+          style: TextStyle(color: Colors.white38, fontSize: 14)),
     ]));
 
     if (_resultError != null) return Center(child: Padding(
         padding: const EdgeInsets.all(32),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Icon(Icons.signal_wifi_off_rounded, color: Colors.redAccent, size: 44),
-          const SizedBox(height: 16),
-          const Text('Could not load results', style: TextStyle(color: Colors.white,
-              fontSize: 16, fontWeight: FontWeight.w800)),
-          const SizedBox(height: 8),
-          Text(_resultError!, textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withOpacity(0.45), fontSize: 12)),
-          const SizedBox(height: 24),
-          GestureDetector(onTap: _loadResults, child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
-              decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                      colors: [Color(0xFF2DB144), Color(0xFF1E8E32)]),
-                  borderRadius: BorderRadius.circular(12)),
-              child: const Text('Try Again', style: TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w800)))),
-        ])));
+        child: Column(mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.signal_wifi_off_rounded,
+                  color: Colors.redAccent, size: 44),
+              const SizedBox(height: 16),
+              const Text('Could not load results', style: TextStyle(
+                  color: Colors.white, fontSize: 16,
+                  fontWeight: FontWeight.w800)),
+              const SizedBox(height: 8),
+              Text(_resultError!, textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Colors.white.withOpacity(0.45), fontSize: 12)),
+              const SizedBox(height: 24),
+              GestureDetector(
+                onTap: _loadResults,
+                child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 12),
+                    decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [
+                          Color(0xFF2DB144), Color(0xFF1E8E32)]),
+                        borderRadius: BorderRadius.circular(12)),
+                    child: const Text('Try Again', style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800))),
+              ),
+            ])));
 
     if (_result == null) return Center(child: Column(
         mainAxisAlignment: MainAxisAlignment.center, children: [
-      Container(width: 64, height: 64,
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.06),
+      Container(
+          width: 64, height: 64,
+          decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.06),
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white.withOpacity(0.1))),
-          child: const Icon(Icons.hourglass_top_rounded, color: Colors.white38, size: 28)),
+          child: const Icon(Icons.hourglass_top_rounded,
+              color: Colors.white38, size: 28)),
       const SizedBox(height: 16),
-      const Text('Results not yet published', style: TextStyle(color: Colors.white54,
-          fontSize: 15, fontWeight: FontWeight.w700)),
+      const Text('Results not yet published', style: TextStyle(
+          color: Colors.white54, fontSize: 15,
+          fontWeight: FontWeight.w700)),
       const SizedBox(height: 6),
       Text('Check back later',
-          style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 13)),
+          style: TextStyle(
+              color: Colors.white.withOpacity(0.3), fontSize: 13)),
     ]));
 
-    final r = _result!;
-    final pr  = r.highestBidPrice - r.lowestBidPrice;
-    final cf  = pr > 0 ? ((r.cutoffPrice   - r.lowestBidPrice) / pr).clamp(0.0, 1.0) : 0.5;
-    final af  = pr > 0 ? ((r.averageBidPrice - r.lowestBidPrice) / pr).clamp(0.0, 1.0) : 0.5;
+    final r  = _result!;
+    final pr = r.highestBidPrice - r.lowestBidPrice;
+    final cf = pr > 0
+        ? ((r.cutoffPrice    - r.lowestBidPrice) / pr).clamp(0.0, 1.0)
+        : 0.5;
+    final af = pr > 0
+        ? ((r.averageBidPrice - r.lowestBidPrice) / pr).clamp(0.0, 1.0)
+        : 0.5;
 
-    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 32), children: [
+    return ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32), children: [
       Row(children: [
         Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 5),
             decoration: BoxDecoration(
-                gradient: r.resultPublished ? const LinearGradient(
-                    colors: [Color(0xFF1A6B2A), Color(0xFF0F4D1D)]) : null,
-                color: r.resultPublished ? null : Colors.white.withOpacity(0.07),
+                gradient: r.resultPublished
+                    ? const LinearGradient(colors: [
+                  Color(0xFF1A6B2A), Color(0xFF0F4D1D)]) : null,
+                color: r.resultPublished
+                    ? null : Colors.white.withOpacity(0.07),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: r.resultPublished
-                    ? const Color(0xFF2DB144).withOpacity(0.5)
-                    : Colors.white.withOpacity(0.12))),
+                border: Border.all(
+                    color: r.resultPublished
+                        ? const Color(0xFF2DB144).withOpacity(0.5)
+                        : Colors.white.withOpacity(0.12))),
             child: Row(children: [
-              Icon(r.resultPublished ? Icons.verified_rounded : Icons.pending_rounded,
+              Icon(r.resultPublished
+                  ? Icons.verified_rounded : Icons.pending_rounded,
                   size: 14,
-                  color: r.resultPublished ? const Color(0xFF2DB144) : Colors.white38),
+                  color: r.resultPublished
+                      ? const Color(0xFF2DB144) : Colors.white38),
               const SizedBox(width: 6),
               Text(r.resultPublished ? 'Published' : 'Unpublished',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+                  style: TextStyle(fontSize: 12,
+                      fontWeight: FontWeight.w700,
                       color: r.resultPublished
                           ? const Color(0xFF2DB144) : Colors.white38)),
             ])),
         if (r.publishedDate != null) ...[
           const SizedBox(width: 10),
           Text(_fDT(r.publishedDate!),
-              style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.35))),
+              style: TextStyle(fontSize: 11,
+                  color: Colors.white.withOpacity(0.35))),
         ],
         const Spacer(),
         Text('Result #${r.resultId}',
-            style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.25))),
+            style: TextStyle(fontSize: 11,
+                color: Colors.white.withOpacity(0.25))),
       ]),
 
       const SizedBox(height: 18),
@@ -1711,62 +2022,73 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
       const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(color: const Color(0xFF0D0D0D),
+        decoration: BoxDecoration(
+            color: const Color(0xFF0D0D0D),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: Colors.white.withOpacity(0.07))),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            _pLabel('LOW', r.fmtLowestBidPrice, Colors.redAccent),
-            _pLabel('HIGH', r.fmtHighestBidPrice, const Color(0xFF2DB144), right: true),
-          ]),
-          const SizedBox(height: 10),
-          LayoutBuilder(builder: (ctx, box) {
-            final w = box.maxWidth;
-            return Stack(clipBehavior: Clip.none, children: [
-              Container(height: 8, decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.07),
-                  borderRadius: BorderRadius.circular(4))),
-              Container(height: 8, width: w * cf,
-                  decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                          colors: [Color(0xFF2DB144), Color(0xFFD4A017)]),
-                      borderRadius: BorderRadius.circular(4))),
-              Positioned(left: (w * af) - 1, top: -4,
-                  child: Container(width: 2, height: 16,
-                      decoration: BoxDecoration(color: Colors.blueAccent,
-                          borderRadius: BorderRadius.circular(1)))),
-              Positioned(left: (w * cf) - 7, top: -6,
-                  child: Container(width: 14, height: 14,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _pLabel('LOW', r.fmtLowestBidPrice, Colors.redAccent),
+                    _pLabel('HIGH', r.fmtHighestBidPrice,
+                        const Color(0xFF2DB144), right: true),
+                  ]),
+              const SizedBox(height: 10),
+              LayoutBuilder(builder: (ctx, box) {
+                final w = box.maxWidth;
+                return Stack(clipBehavior: Clip.none, children: [
+                  Container(height: 8,
                       decoration: BoxDecoration(
-                          color: const Color(0xFFD4A017), shape: BoxShape.circle,
-                          border: Border.all(color: const Color(0xFF0D0D0D), width: 2),
-                          boxShadow: [BoxShadow(
-                              color: const Color(0xFFD4A017).withOpacity(0.5),
-                              blurRadius: 6)]))),
-            ]);
-          }),
-          const SizedBox(height: 16),
-          Row(children: [
-            _dot(const Color(0xFF2DB144)), const SizedBox(width: 5),
-            Text('Fill', style: _ls()),
-            const SizedBox(width: 14),
-            _dot(Colors.blueAccent), const SizedBox(width: 5),
-            Text('Avg ${r.fmtAverageBidPrice}', style: _ls()),
-            const SizedBox(width: 14),
-            _dot(const Color(0xFFD4A017)), const SizedBox(width: 5),
-            Text('Cutoff ${r.fmtCutoffPrice}', style: _ls()),
-          ]),
-          const SizedBox(height: 16),
-          Divider(color: Colors.white.withOpacity(0.07), height: 1),
-          const SizedBox(height: 14),
-          Row(children: [
-            _pCol('AVERAGE', r.fmtAverageBidPrice, Colors.blueAccent),
-            _pColDiv(),
-            _pCol('CUTOFF', r.fmtCutoffPrice, const Color(0xFFD4A017)),
-            _pColDiv(),
-            _pCol('UNIFORM', r.fmtUniformPrice, Colors.purpleAccent),
-          ]),
-        ]),
+                          color: Colors.white.withOpacity(0.07),
+                          borderRadius: BorderRadius.circular(4))),
+                  Container(height: 8, width: w * cf,
+                      decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [
+                            Color(0xFF2DB144), Color(0xFFD4A017)]),
+                          borderRadius: BorderRadius.circular(4))),
+                  Positioned(left: (w * af) - 1, top: -4,
+                      child: Container(width: 2, height: 16,
+                          decoration: BoxDecoration(
+                              color: Colors.blueAccent,
+                              borderRadius: BorderRadius.circular(1)))),
+                  Positioned(left: (w * cf) - 7, top: -6,
+                      child: Container(width: 14, height: 14,
+                          decoration: BoxDecoration(
+                              color: const Color(0xFFD4A017),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: const Color(0xFF0D0D0D),
+                                  width: 2),
+                              boxShadow: [BoxShadow(
+                                  color: const Color(0xFFD4A017)
+                                      .withOpacity(0.5),
+                                  blurRadius: 6)]))),
+                ]);
+              }),
+              const SizedBox(height: 16),
+              Row(children: [
+                _dot(const Color(0xFF2DB144)), const SizedBox(width: 5),
+                Text('Fill', style: _ls()),
+                const SizedBox(width: 14),
+                _dot(Colors.blueAccent), const SizedBox(width: 5),
+                Text('Avg ${r.fmtAverageBidPrice}', style: _ls()),
+                const SizedBox(width: 14),
+                _dot(const Color(0xFFD4A017)), const SizedBox(width: 5),
+                Text('Cutoff ${r.fmtCutoffPrice}', style: _ls()),
+              ]),
+              const SizedBox(height: 16),
+              Divider(color: Colors.white.withOpacity(0.07), height: 1),
+              const SizedBox(height: 14),
+              Row(children: [
+                _pCol('AVERAGE', r.fmtAverageBidPrice, Colors.blueAccent),
+                _pColDiv(),
+                _pCol('CUTOFF', r.fmtCutoffPrice,
+                    const Color(0xFFD4A017)),
+                _pColDiv(),
+                _pCol('UNIFORM', r.fmtUniformPrice, Colors.purpleAccent),
+              ]),
+            ]),
       ),
 
       const SizedBox(height: 22),
@@ -1787,9 +2109,10 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
             color: r.settlementCompleted
                 ? const Color(0xFF0A2F12) : const Color(0xFF1C1200),
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: r.settlementCompleted
-                ? const Color(0xFF2DB144).withOpacity(0.4)
-                : Colors.orange.withOpacity(0.35))),
+            border: Border.all(
+                color: r.settlementCompleted
+                    ? const Color(0xFF2DB144).withOpacity(0.4)
+                    : Colors.orange.withOpacity(0.35))),
         child: Row(children: [
           Container(width: 44, height: 44,
               decoration: BoxDecoration(
@@ -1797,24 +2120,28 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
                       ? const Color(0xFF2DB144).withOpacity(0.15)
                       : Colors.orange.withOpacity(0.15),
                   shape: BoxShape.circle),
-              child: Icon(r.settlementCompleted
-                  ? Icons.check_circle_outline_rounded : Icons.schedule_rounded,
+              child: Icon(
+                  r.settlementCompleted
+                      ? Icons.check_circle_outline_rounded
+                      : Icons.schedule_rounded,
                   size: 22,
                   color: r.settlementCompleted
                       ? const Color(0xFF2DB144) : Colors.orange)),
           const SizedBox(width: 14),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(r.settlementCompleted
-                    ? 'Settlement Complete' : 'Settlement Pending',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900,
-                        color: r.settlementCompleted
-                            ? const Color(0xFF2DB144) : Colors.orange)),
-                const SizedBox(height: 3),
-                Text(r.settlementDate != null
-                    ? _fDT(r.settlementDate!) : 'Date not yet confirmed',
-                    style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.4))),
-              ])),
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(r.settlementCompleted
+                ? 'Settlement Complete' : 'Settlement Pending',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900,
+                    color: r.settlementCompleted
+                        ? const Color(0xFF2DB144) : Colors.orange)),
+            const SizedBox(height: 3),
+            Text(r.settlementDate != null
+                ? _fDT(r.settlementDate!)
+                : 'Date not yet confirmed',
+                style: TextStyle(fontSize: 12,
+                    color: Colors.white.withOpacity(0.4))),
+          ])),
         ]),
       ),
     ]);
@@ -1827,29 +2154,35 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
         decoration: BoxDecoration(color: c.withOpacity(0.15),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: c.withOpacity(0.4))),
-        child: Text(s, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
-            color: c, letterSpacing: 0.5)));
+        child: Text(s, style: TextStyle(fontSize: 11,
+            fontWeight: FontWeight.w800, color: c, letterSpacing: 0.5)));
   }
 
-  Widget _card(String title, List<Widget> rows, {Widget? extra}) => Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white.withOpacity(0.08))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: const TextStyle(color: Color(0xFFD4A017), fontSize: 11,
-            fontWeight: FontWeight.w800, letterSpacing: 0.8)),
-        const SizedBox(height: 12),
-        Divider(color: Colors.white.withOpacity(0.08), height: 1),
-        const SizedBox(height: 10),
-        ...rows,
-        if (extra != null) extra,
-      ]));
+  Widget _card(String title, List<Widget> rows, {Widget? extra}) =>
+      Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withOpacity(0.08))),
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(
+                color: Color(0xFFD4A017), fontSize: 11,
+                fontWeight: FontWeight.w800, letterSpacing: 0.8)),
+            const SizedBox(height: 12),
+            Divider(color: Colors.white.withOpacity(0.08), height: 1),
+            const SizedBox(height: 10),
+            ...rows,
+            if (extra != null) extra,
+          ]));
 
   Widget _row(String l, String v, {Color? vc}) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.start, children: [
+      child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Expanded(child: Text(l, style: TextStyle(fontSize: 11,
                 color: Colors.white.withOpacity(0.45)))),
             const SizedBox(width: 6),
@@ -1861,19 +2194,24 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
   Widget _hero(String l, String v, IconData icon, Color c, int flex) =>
       Expanded(flex: flex, child: Container(
           padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: c.withOpacity(0.08),
+          decoration: BoxDecoration(
+              color: c.withOpacity(0.08),
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: c.withOpacity(0.25))),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(icon, size: 14, color: c.withOpacity(0.8)), const SizedBox(width: 6),
-              Text(l, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700,
-                  color: c.withOpacity(0.7), letterSpacing: 0.5)),
-            ]),
-            const SizedBox(height: 8),
-            Text(v, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900,
-                color: Colors.white), overflow: TextOverflow.ellipsis),
-          ])));
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(icon, size: 14, color: c.withOpacity(0.8)),
+                  const SizedBox(width: 6),
+                  Text(l, style: TextStyle(fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      color: c.withOpacity(0.7), letterSpacing: 0.5)),
+                ]),
+                const SizedBox(height: 8),
+                Text(v, style: const TextStyle(fontSize: 18,
+                    fontWeight: FontWeight.w900, color: Colors.white),
+                    overflow: TextOverflow.ellipsis),
+              ])));
 
   Widget _secHdr(String l) => Row(children: [
     Container(width: 3, height: 14,
@@ -1890,21 +2228,23 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
         Text(l, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700,
             color: c.withOpacity(0.7), letterSpacing: 0.5)),
         const SizedBox(height: 2),
-        Text(v, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: c)),
+        Text(v, style: TextStyle(fontSize: 14,
+            fontWeight: FontWeight.w900, color: c)),
       ]);
 
   Widget _dot(Color c) => Container(width: 8, height: 8,
       decoration: BoxDecoration(color: c, shape: BoxShape.circle));
 
-  TextStyle _ls() => TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.45),
-      fontWeight: FontWeight.w600);
+  TextStyle _ls() => TextStyle(fontSize: 11,
+      color: Colors.white.withOpacity(0.45), fontWeight: FontWeight.w600);
 
   Widget _pCol(String l, String v, Color c) =>
       Expanded(child: Column(children: [
         Text(l, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700,
             color: Colors.white.withOpacity(0.4), letterSpacing: 0.4)),
         const SizedBox(height: 6),
-        Text(v, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: c),
+        Text(v, style: TextStyle(fontSize: 14,
+            fontWeight: FontWeight.w900, color: c),
             textAlign: TextAlign.center),
       ]));
 
@@ -1921,8 +2261,8 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
         Text(l, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700,
             color: c.withOpacity(0.7), letterSpacing: 0.4)),
         const SizedBox(height: 8),
-        Text(v, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900,
-            color: Colors.white)),
+        Text(v, style: const TextStyle(fontSize: 20,
+            fontWeight: FontWeight.w900, color: Colors.white)),
       ]));
 
   static String _fDT(String iso) {
