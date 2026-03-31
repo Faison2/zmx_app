@@ -353,7 +353,6 @@ class AuctionService {
     return null;
   }
 
-  // ── FIXED: PUT /v1/auction/bids/{bidId} with only bidPrice + bidQuantity ──
   static Future<void> editBid({
     required int    bidId,
     required double bidPrice,
@@ -472,8 +471,9 @@ class _AuctionContentState extends State<AuctionContent>
   late AnimationController _fc;
   late Animation<double>   _fa;
 
-  List<AuctionModel> _auctions    = [];
-  Set<int>           _biddedIds   = {};
+  List<AuctionModel>        _auctions    = [];
+  // ── CHANGED: full record map instead of just IDs ──
+  Map<int, PlacedBidRecord> _bidRecords  = {};
   bool               _loading     = true;
   bool               _silentLoad  = false;
   String?            _error;
@@ -498,6 +498,17 @@ class _AuctionContentState extends State<AuctionContent>
     });
   }
 
+  // ── CHANGED: load full PlacedBidRecord for every stored auction ID ──
+  Future<Map<int, PlacedBidRecord>> _loadAllRecords() async {
+    final ids     = await BidStore.loadAllAuctionIds();
+    final records = <int, PlacedBidRecord>{};
+    for (final id in ids) {
+      final r = await BidStore.load(id);
+      if (r != null) records[id] = r;
+    }
+    return records;
+  }
+
   Future<void> _load({bool initial = false, bool silent = false}) async {
     if (silent) {
       setState(() => _silentLoad = true);
@@ -506,17 +517,18 @@ class _AuctionContentState extends State<AuctionContent>
     }
 
     try {
-      final res = await Future.wait([
+      // ── CHANGED: fetch auctions and full bid records in parallel ──
+      final results = await Future.wait([
         AuctionService.fetchAll(),
-        BidStore.loadAllAuctionIds(),
+        _loadAllRecords(),
       ]);
       if (mounted) {
         setState(() {
-          _auctions     = res[0] as List<AuctionModel>;
-          _biddedIds    = res[1] as Set<int>;
-          _loading      = false;
-          _silentLoad   = false;
-          _lastUpdated  = DateTime.now();
+          _auctions    = results[0] as List<AuctionModel>;
+          _bidRecords  = results[1] as Map<int, PlacedBidRecord>;
+          _loading     = false;
+          _silentLoad  = false;
+          _lastUpdated = DateTime.now();
         });
         if (initial) _fc.forward(from: 0);
       }
@@ -544,9 +556,10 @@ class _AuctionContentState extends State<AuctionContent>
       backgroundColor: Colors.transparent,
       builder: (_) => _PlaceBidSheet(auction: auction),
     );
+    // ── CHANGED: reload full records after sheet closes ──
     if (mounted) {
-      final ids = await BidStore.loadAllAuctionIds();
-      setState(() => _biddedIds = ids);
+      final records = await _loadAllRecords();
+      setState(() => _bidRecords = records);
     }
   }
 
@@ -727,10 +740,13 @@ class _AuctionContentState extends State<AuctionContent>
       ? Colors.redAccent : Colors.grey;
 
   Widget _buildCard(AuctionModel a, int idx) {
-    final isActive     = a.status == 'ACTIVE';
-    final isClosed     = a.status == 'CLOSED';
-    final sc           = _statusColor(a.status);
-    final hasPlacedBid = _biddedIds.contains(a.auctionId);
+    final isActive = a.status == 'ACTIVE';
+    final isClosed = a.status == 'CLOSED';
+    final sc       = _statusColor(a.status);
+
+    // ── CHANGED: pull full record so we can display price/qty ──
+    final myBid        = _bidRecords[a.auctionId];
+    final hasPlacedBid = myBid != null;
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
@@ -756,6 +772,8 @@ class _AuctionContentState extends State<AuctionContent>
                   style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
                       color: Color(0xFFD4A017), letterSpacing: 0.5))),
               const SizedBox(width: 8),
+
+              // ── CHANGED: badge now shows price instead of plain text ──
               if (hasPlacedBid && isActive) ...[
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -763,13 +781,16 @@ class _AuctionContentState extends State<AuctionContent>
                       color: Colors.blueAccent.withOpacity(0.10),
                       borderRadius: BorderRadius.circular(7),
                       border: Border.all(color: Colors.blueAccent.withOpacity(0.4))),
-                  child: const Row(children: [
-                    Icon(Icons.check_circle_outline_rounded,
+                  child: Row(children: [
+                    const Icon(Icons.check_circle_outline_rounded,
                         size: 10, color: Colors.blueAccent),
-                    SizedBox(width: 3),
-                    Text('BID PLACED', style: TextStyle(fontSize: 9,
-                        fontWeight: FontWeight.w800, color: Colors.blueAccent,
-                        letterSpacing: 0.4)),
+                    const SizedBox(width: 3),
+                    Text(
+                      'MY BID  ${myBid.formattedPrice}',
+                      style: const TextStyle(fontSize: 9,
+                          fontWeight: FontWeight.w800, color: Colors.blueAccent,
+                          letterSpacing: 0.4),
+                    ),
                   ]),
                 ),
                 const SizedBox(width: 6),
@@ -838,6 +859,33 @@ class _AuctionContentState extends State<AuctionContent>
                       fontWeight: FontWeight.w700)),
             ]),
           ),
+
+          // ── NEW: my bid strip — price × quantity shown when bid exists ──
+          if (hasPlacedBid && isActive) ...[
+            Container(
+              margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+              decoration: BoxDecoration(
+                color: Colors.blueAccent.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blueAccent.withOpacity(0.25)),
+              ),
+              child: Row(children: [
+                const Icon(Icons.how_to_vote_rounded, size: 13, color: Colors.blueAccent),
+                const SizedBox(width: 8),
+                Text('My Bid', style: TextStyle(
+                    fontSize: 11, fontWeight: FontWeight.w700,
+                    color: Colors.blueAccent.withOpacity(0.75))),
+                const Spacer(),
+                Text(
+                  '${myBid.formattedPrice}  ×  ${myBid.formattedQuantity} qty',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w900,
+                      color: Colors.blueAccent),
+                ),
+              ]),
+            ),
+          ],
 
           const SizedBox(height: 12),
 
@@ -952,7 +1000,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
   String?          _error;
   PlacedBidRecord? _existing;
 
-  // Edit mode is only valid when the stored record has a server-side bidId
   bool get _editMode => _existing != null && _existing!.bidId != null;
 
   final _priceCtrl = TextEditingController();
@@ -970,10 +1017,7 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     setState(() {
       _clientCode = prefs.getString('user_cds')  ?? 'DEFAULT';
       _clientName = prefs.getString('user_name') ?? 'Default Client';
-
-      // Only treat as existing if we have a real server bidId to PUT against
       _existing = (existing != null && existing.bidId != null) ? existing : null;
-
       if (_existing != null) {
         _priceCtrl.text = _existing!.bidPrice.toStringAsFixed(2);
         _qtyCtrl.text   = _existing!.bidQuantity.toString();
@@ -997,7 +1041,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
     setState(() { _submitting = true; _error = null; });
     try {
       if (_editMode) {
-        // ── FIXED: PUT /v1/auction/bids/{bidId} — only price + quantity ──
         await AuctionService.editBid(
           bidId:       _existing!.bidId!,
           bidPrice:    _price,
@@ -1354,6 +1397,9 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
   String? _resultError;
   late TabController _tab;
 
+  // ── NEW: placed bid loaded from local store ──
+  PlacedBidRecord? _myBid;
+
   bool get _isClosed => widget.auction.status == 'CLOSED';
   bool get _isActive => widget.auction.status == 'ACTIVE';
 
@@ -1362,6 +1408,13 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
     super.initState();
     _tab = TabController(length: _isClosed ? 2 : 1, vsync: this);
     if (_isClosed) _loadResults();
+    _loadMyBid(); // ── NEW ──
+  }
+
+  // ── NEW: load the stored bid for this auction ──
+  Future<void> _loadMyBid() async {
+    final r = await BidStore.load(widget.auction.auctionId);
+    if (mounted) setState(() => _myBid = r);
   }
 
   @override void dispose() { _tab.dispose(); super.dispose(); }
@@ -1478,6 +1531,41 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
           ],
         ])),
       ]),
+
+      // ── NEW: my placed bid card, shown whenever a local record exists ──
+      if (_myBid != null) ...[
+        const SizedBox(height: 12),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.blueAccent.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.blueAccent.withOpacity(0.30)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Row(children: [
+              Icon(Icons.how_to_vote_rounded, size: 13, color: Colors.blueAccent),
+              SizedBox(width: 7),
+              Text('MY PLACED BID', style: TextStyle(
+                  fontSize: 10, fontWeight: FontWeight.w800,
+                  color: Colors.blueAccent, letterSpacing: 0.8)),
+            ]),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(child: _row('Bid Price', _myBid!.formattedPrice,
+                  vc: Colors.blueAccent)),
+              Expanded(child: _row('Quantity', _myBid!.formattedQuantity,
+                  vc: Colors.white)),
+            ]),
+            _row('Submitted', _fDT(_myBid!.submittedAt),
+                vc: Colors.white.withOpacity(0.45)),
+            if (_myBid!.bidId != null)
+              _row('Bid ID', '#${_myBid!.bidId}',
+                  vc: Colors.white.withOpacity(0.35)),
+          ]),
+        ),
+      ],
+
       const SizedBox(height: 12),
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Expanded(child: _card('TIMELINE', [
@@ -1498,9 +1586,9 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
       const SizedBox(height: 20),
       if (_isActive)
         GestureDetector(
-          onTap: () {
+          onTap: () async {
             Navigator.pop(context);
-            showModalBottomSheet(context: context, isScrollControlled: true,
+            await showModalBottomSheet(context: context, isScrollControlled: true,
                 backgroundColor: Colors.transparent,
                 builder: (_) => _PlaceBidSheet(auction: a));
           },

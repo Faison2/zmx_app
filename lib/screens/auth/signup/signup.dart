@@ -1,8 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:zmx/screens/auth/login/login.dart';
-
-import '../../dashboard/dashoard.dart';
-
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -14,6 +13,11 @@ class SignUpScreen extends StatefulWidget {
 class _SignUpScreenState extends State<SignUpScreen> {
   final PageController _pageController = PageController();
   int _currentStep = 0;
+  bool _isLoading = false;
+
+  // ── Bank data from API ─────────────────────────────────────────────
+  List<Map<String, String>> _banks = [];
+  bool _loadingBanks = false;
 
   // ── Step 1: Credentials ───────────────────────────────────────────────
   final _emailController = TextEditingController();
@@ -26,29 +30,90 @@ class _SignUpScreenState extends State<SignUpScreen> {
   String? _selectedTitle;
   String? _selectedGender;
   String? _selectedNationality;
-  final _nameController = TextEditingController();
+  String? _selectedIdType;
+  String? _selectedOccupation;
+  String? _selectedIndustry;
+  String? _selectedPepStatus;
+  final _forenamesController = TextEditingController();
   final _surnameController = TextEditingController();
+  final _middlenameController = TextEditingController();
+  final _initialsController = TextEditingController();
   final _dobController = TextEditingController();
   final _idController = TextEditingController();
   final _mobileController = TextEditingController();
-  final _addressController = TextEditingController();
+  final _telController = TextEditingController();
+  final _add1Controller = TextEditingController();
+  final _add2Controller = TextEditingController();
+  final _cityController = TextEditingController();
+  final _taxController = TextEditingController();
 
   // ── Step 3: Banking Details ───────────────────────────────────────────
-  final _zigBankController = TextEditingController();
+  String? _selectedZigBank;
   final _zigBranchController = TextEditingController();
   final _zigAccountController = TextEditingController();
-  final _usdBankController = TextEditingController();
+  String? _selectedUsdBank;
   final _usdBranchController = TextEditingController();
   final _usdAccountController = TextEditingController();
+  String? _selectedMobileMoney;
+  final _mobileMoneyNumberController = TextEditingController();
 
   // ── Step 4: Security Questions ────────────────────────────────────────
   final _maidenNameController = TextEditingController();
   final _favBookController = TextEditingController();
   final _roadController = TextEditingController();
 
+  // ── Dropdown Options ──────────────────────────────────────────────────
   final List<String> _titles = ['Mr', 'Mrs', 'Ms', 'Dr', 'Prof'];
-  final List<String> _genders = ['Male', 'Female', 'Other'];
-  final List<String> _nationalities = ['Zimbabwean', 'South African', 'Zambian', 'Botswanan', 'Other'];
+  final List<Map<String, String>> _genders = [
+    {'label': 'Male', 'value': 'M'},
+    {'label': 'Female', 'value': 'F'},
+    {'label': 'Other', 'value': 'O'},
+  ];
+  final List<String> _nationalities = [
+    'Zimbabwean', 'South African', 'Zambian', 'Botswanan', 'Other'
+  ];
+  final List<String> _idTypes = ['NID', 'PASSPORT', 'DRIVER_LICENSE'];
+  final List<String> _occupations = [
+    'Accountant', 'Engineer', 'Teacher', 'Doctor', 'Lawyer',
+    'Business Owner', 'Student', 'Retired', 'Other'
+  ];
+  final List<String> _industries = [
+    'Finance', 'Agriculture', 'Mining', 'Manufacturing', 'Retail',
+    'Education', 'Health', 'Technology', 'Construction', 'Other'
+  ];
+  final List<String> _pepStatuses = ['YES', 'NO'];
+  final List<String> _mobileMoneyOptions = ['EcoCash', 'OneMoney', 'Telecash'];
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchBanks();
+  }
+
+  // ── Fetch Banks ───────────────────────────────────────────────────────
+  Future<void> _fetchBanks() async {
+    setState(() => _loadingBanks = true);
+    try {
+      final response = await http
+          .get(Uri.parse('https://system.zmx.co.zw/ZMX-API/Subscriber'))
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        setState(() {
+          _banks = data
+              .map<Map<String, String>>((e) => {
+            'code': (e['Code'] as String).trim(),
+            'name': (e['Name'] as String).trim(),
+          })
+              .toList();
+        });
+      }
+    } catch (e) {
+      // Silently fail — user will see empty dropdown with retry option
+    } finally {
+      setState(() => _loadingBanks = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -56,18 +121,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _nameController.dispose();
+    _forenamesController.dispose();
     _surnameController.dispose();
+    _middlenameController.dispose();
+    _initialsController.dispose();
     _dobController.dispose();
     _idController.dispose();
     _mobileController.dispose();
-    _addressController.dispose();
-    _zigBankController.dispose();
+    _telController.dispose();
+    _add1Controller.dispose();
+    _add2Controller.dispose();
+    _cityController.dispose();
+    _taxController.dispose();
     _zigBranchController.dispose();
     _zigAccountController.dispose();
-    _usdBankController.dispose();
     _usdBranchController.dispose();
     _usdAccountController.dispose();
+    _mobileMoneyNumberController.dispose();
     _maidenNameController.dispose();
     _favBookController.dispose();
     _roadController.dispose();
@@ -96,16 +166,207 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
   }
 
+  // ── Register API Call ─────────────────────────────────────────────────
+  Future<void> _submitRegistration() async {
+    setState(() => _isLoading = true);
+
+    final body = {
+      "password": _passwordController.text.trim(),
+      "accountsClientsWeb": {
+        "accountType": "i",
+        "surname": _surnameController.text.trim(),
+        "middlename": _middlenameController.text.trim(),
+        "forenames": _forenamesController.text.trim(),
+        "initials": _initialsController.text.trim(),
+        "title": _selectedTitle ?? "",
+        "iDNoPP": _idController.text.trim(),
+        "iDtype": _selectedIdType ?? "NID",
+        "nationality": _selectedNationality ?? "",
+        "dob": _dobController.text.trim(),
+        "gender": _selectedGender ?? "",
+        "add1": _add1Controller.text.trim(),
+        "add2": _add2Controller.text.trim(),
+        "add3": _cityController.text.trim(),
+        "add4": "",
+        "country": "Zimbabwe",
+        "city": _cityController.text.trim(),
+        "tel": _telController.text.trim(),
+        "mobile": _mobileController.text.trim(),
+        "email": _emailController.text.trim(),
+        "category": "C",
+        "custodian": null,
+        "tradingStatus": "DEALING ALLOWED",
+        "industry": _selectedIndustry ?? "",
+        "tax": _taxController.text.trim(),
+        "divBank": _selectedZigBank ?? "",
+        "divBranch": _zigBranchController.text.trim(),
+        "divAccountNo": _zigAccountController.text.trim(),
+        "cashBank": _selectedZigBank ?? "",
+        "cashBranch": _zigBranchController.text.trim(),
+        "cashAccountNo": _zigAccountController.text.trim(),
+        "usdCashBranch": _usdBranchController.text.trim(),
+        "usdCashBank": _selectedUsdBank ?? "",
+        "usdCashAccount": _usdAccountController.text.trim(),
+        "attachedDocuments": "",
+        "accountState": "ACTIVE",
+        "comments": "",
+        "divPayee": "${_forenamesController.text.trim()} ${_surnameController.text.trim()}",
+        "settlementPayee": "${_forenamesController.text.trim()} ${_surnameController.text.trim()}",
+        "accountclass": "RETAIL",
+        "idnopp2": "",
+        "idtype2": "",
+        "clientImage2": "",
+        "documents2": "",
+        "isin": "",
+        "companyCode": "",
+        "mobileMoney": _selectedMobileMoney ?? "",
+        "mobileNumber": _mobileMoneyNumberController.text.trim(),
+        "sttupdate": false,
+        "currency": "USD",
+        "tradingPlatform": "ZMX",
+        "sourceName": "MOBILE", // hardcoded
+        "client_occupation": _selectedOccupation ?? "",
+        "industry_of_profession": _selectedIndustry ?? "",
+        "pep_status": _selectedPepStatus ?? "NO",
+      }
+    };
+
+    try {
+      final response = await http
+          .post(
+        Uri.parse('https://ussd.zmx.co.zw/v1/auth/register'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      )
+          .timeout(const Duration(seconds: 30));
+
+      final responseData = jsonDecode(response.body);
+
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      if (response.statusCode == 200 && responseData['status'] == true) {
+        _showSuccessDialog(responseData['cdsNumber'] ?? '');
+      } else {
+        _showErrorSnackbar(
+            responseData['message'] ?? 'Registration failed. Please try again.');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _showErrorSnackbar('Network error. Please check your connection.');
+    }
+  }
+
+  void _showSuccessDialog(String cdsNumber) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Column(
+          children: [
+            Icon(Icons.check_circle_rounded,
+                color: Color(0xFF2DB144), size: 60),
+            SizedBox(height: 12),
+            Text('Account Created!',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 20)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Your CDS Account Number:',
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.7), fontSize: 14)),
+            const SizedBox(height: 6),
+            Text(cdsNumber,
+                style: const TextStyle(
+                    color: Color(0xFFD4A017),
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.5)),
+            const SizedBox(height: 8),
+            Text('Please save your CDS number for future reference.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.55), fontSize: 13)),
+          ],
+        ),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2DB144),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              onPressed: () {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      (route) => false,
+                );
+              },
+              child: const Text('Proceed to Login',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showErrorSnackbar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  // ── Date Picker ───────────────────────────────────────────────────────
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime(1990, 1, 1),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now().subtract(const Duration(days: 365 * 18)),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: Color(0xFF2DB144),
+            surface: Color(0xFF2D2D2D),
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) {
+      _dobController.text =
+      '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // ── Background image ──────────────────────────────────────
           Image.asset('assets/images/splash.png', fit: BoxFit.cover),
-
-          // ── Dark overlay ──────────────────────────────────────────
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -119,12 +380,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ),
             ),
           ),
-
-          // ── Content ───────────────────────────────────────────────
           SafeArea(
             child: Column(
               children: [
-                // Back button
                 Align(
                   alignment: Alignment.centerLeft,
                   child: GestureDetector(
@@ -136,15 +394,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     ),
                   ),
                 ),
-
-                // Logo
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Image.asset('assets/images/logo.png',
                       height: 70, fit: BoxFit.contain),
                 ),
-
-                // SIGN UP title
                 const Text(
                   'SIGN UP',
                   style: TextStyle(
@@ -154,10 +408,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     letterSpacing: 2,
                   ),
                 ),
-
                 const SizedBox(height: 8),
-
-                // Step indicator dots
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: List.generate(4, (i) {
@@ -176,10 +427,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     );
                   }),
                 ),
-
                 const SizedBox(height: 12),
-
-                // ── Pages ─────────────────────────────────────────
                 Expanded(
                   child: PageView(
                     controller: _pageController,
@@ -195,6 +443,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
               ],
             ),
           ),
+          // Loading overlay
+          if (_isLoading)
+            Container(
+              color: Colors.black.withOpacity(0.6),
+              child: const Center(
+                child: CircularProgressIndicator(color: Color(0xFF2DB144)),
+              ),
+            ),
         ],
       ),
     );
@@ -208,14 +464,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       child: Column(
         children: [
-          const Text(
-            'Log in Credentials',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          _buildStepTitle('Log in Credentials'),
           const SizedBox(height: 24),
           _buildTextField(
             controller: _emailController,
@@ -269,14 +518,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       child: Column(
         children: [
-          // Title + Gender row
+          _buildStepTitle('Personal Information'),
+          const SizedBox(height: 16),
+
+          // Title + Gender
           Row(
             children: [
               Expanded(
                 child: _buildDropdown(
                   hint: 'Title',
                   value: _selectedTitle,
-                  items: _titles,
+                  items: _titles.map((e) => {'label': e, 'value': e}).toList(),
                   onChanged: (v) => setState(() => _selectedTitle = v),
                 ),
               ),
@@ -292,34 +544,142 @@ class _SignUpScreenState extends State<SignUpScreen> {
             ],
           ),
           const SizedBox(height: 14),
-          _buildTextField(controller: _nameController, hint: 'Name'),
-          const SizedBox(height: 14),
-          _buildTextField(controller: _surnameController, hint: 'Surname'),
-          const SizedBox(height: 14),
-          _buildTextField(
-            controller: _dobController,
-            hint: 'Date Of Birth',
-            keyboardType: TextInputType.datetime,
-            suffixIcon: const Icon(Icons.calendar_today_rounded,
-                color: Colors.white70, size: 18),
+
+          // Name + Surname
+          Row(
+            children: [
+              Expanded(
+                child: _buildTextField(
+                    controller: _forenamesController, hint: 'First Name'),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTextField(
+                    controller: _surnameController, hint: 'Surname'),
+              ),
+            ],
           ),
           const SizedBox(height: 14),
+          _buildTextField(
+              controller: _middlenameController, hint: 'Middle Name (Optional)'),
+          const SizedBox(height: 14),
+          _buildTextField(
+              controller: _initialsController, hint: 'Initials (e.g. J.P.D)'),
+          const SizedBox(height: 14),
+
+          // DOB
+          GestureDetector(
+            onTap: _pickDate,
+            child: AbsorbPointer(
+              child: _buildTextField(
+                controller: _dobController,
+                hint: 'Date of Birth (YYYY-MM-DD)',
+                keyboardType: TextInputType.datetime,
+                suffixIcon: const Icon(Icons.calendar_today_rounded,
+                    color: Colors.white70, size: 18),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Nationality
           _buildDropdown(
             hint: 'Nationality',
             value: _selectedNationality,
-            items: _nationalities,
+            items: _nationalities
+                .map((e) => {'label': e, 'value': e})
+                .toList(),
             onChanged: (v) => setState(() => _selectedNationality = v),
           ),
           const SizedBox(height: 14),
-          _buildTextField(controller: _idController, hint: 'ID Number'),
-          const SizedBox(height: 14),
-          _buildTextField(
-            controller: _mobileController,
-            hint: 'Mobile Number',
-            keyboardType: TextInputType.phone,
+
+          // ID Type + ID Number
+          Row(
+            children: [
+              Expanded(
+                child: _buildDropdown(
+                  hint: 'ID Type',
+                  value: _selectedIdType,
+                  items: _idTypes
+                      .map((e) => {'label': e, 'value': e})
+                      .toList(),
+                  onChanged: (v) => setState(() => _selectedIdType = v),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTextField(
+                    controller: _idController, hint: 'ID Number'),
+              ),
+            ],
           ),
           const SizedBox(height: 14),
-          _buildTextField(controller: _addressController, hint: 'Address'),
+
+          // Mobile + Tel
+          Row(
+            children: [
+              Expanded(
+                child: _buildTextField(
+                  controller: _mobileController,
+                  hint: 'Mobile Number',
+                  keyboardType: TextInputType.phone,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTextField(
+                  controller: _telController,
+                  hint: 'Tel (Optional)',
+                  keyboardType: TextInputType.phone,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          _buildTextField(controller: _add1Controller, hint: 'Address Line 1'),
+          const SizedBox(height: 14),
+          _buildTextField(
+              controller: _add2Controller, hint: 'Address Line 2 (Optional)'),
+          const SizedBox(height: 14),
+          _buildTextField(controller: _cityController, hint: 'City'),
+          const SizedBox(height: 14),
+          _buildTextField(
+              controller: _taxController, hint: 'Tax Number (Optional)'),
+          const SizedBox(height: 14),
+
+          // Occupation
+          _buildDropdown(
+            hint: 'Occupation',
+            value: _selectedOccupation,
+            items: _occupations
+                .map((e) => {'label': e, 'value': e})
+                .toList(),
+            onChanged: (v) => setState(() => _selectedOccupation = v),
+          ),
+          const SizedBox(height: 14),
+
+          // Industry
+          _buildDropdown(
+            hint: 'Industry',
+            value: _selectedIndustry,
+            items: _industries
+                .map((e) => {'label': e, 'value': e})
+                .toList(),
+            onChanged: (v) => setState(() => _selectedIndustry = v),
+          ),
+          const SizedBox(height: 14),
+
+          // PEP Status
+          _buildDropdown(
+            hint: 'PEP Status',
+            value: _selectedPepStatus,
+            items: _pepStatuses
+                .map((e) => {'label': e, 'value': e})
+                .toList(),
+            onChanged: (v) => setState(() => _selectedPepStatus = v),
+          ),
+
           const SizedBox(height: 32),
           _buildBottomButtons(
             showBack: false,
@@ -340,58 +700,98 @@ class _SignUpScreenState extends State<SignUpScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Banking Details',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
+          Center(child: _buildStepTitle('Banking Details')),
+          const SizedBox(height: 16),
+
+          if (_loadingBanks)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF2DB144),
+                        strokeWidth: 2,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text('Loading banks...',
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.6),
+                            fontSize: 13)),
+                  ],
+                ),
+              ),
             ),
-          ),
-          const SizedBox(height: 20),
+
+          if (!_loadingBanks && _banks.isEmpty)
+            Center(
+              child: TextButton.icon(
+                onPressed: _fetchBanks,
+                icon: const Icon(Icons.refresh_rounded, color: Color(0xFFD4A017)),
+                label: const Text('Retry loading banks',
+                    style: TextStyle(color: Color(0xFFD4A017))),
+              ),
+            ),
 
           // ZiG section
-          Text(
-            'ZiG Banking Details',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.75),
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
-            ),
-          ),
+          _buildSectionLabel('ZiG Banking Details'),
           const SizedBox(height: 10),
-          _buildTextField(controller: _zigBankController, hint: 'Bank'),
+          _buildBankDropdown(
+            hint: 'ZiG Bank',
+            value: _selectedZigBank,
+            onChanged: (v) => setState(() => _selectedZigBank = v),
+          ),
           const SizedBox(height: 12),
           _buildTextField(controller: _zigBranchController, hint: 'Branch'),
           const SizedBox(height: 12),
           _buildTextField(
             controller: _zigAccountController,
-            hint: 'Bank Account',
+            hint: 'Account Number',
             keyboardType: TextInputType.number,
           ),
 
           const SizedBox(height: 22),
 
           // USD section
-          Text(
-            'USD Banking Details',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.75),
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
-            ),
-          ),
+          _buildSectionLabel('USD Banking Details'),
           const SizedBox(height: 10),
-          _buildTextField(controller: _usdBankController, hint: 'Bank'),
+          _buildBankDropdown(
+            hint: 'USD Bank',
+            value: _selectedUsdBank,
+            onChanged: (v) => setState(() => _selectedUsdBank = v),
+          ),
           const SizedBox(height: 12),
           _buildTextField(controller: _usdBranchController, hint: 'Branch'),
           const SizedBox(height: 12),
           _buildTextField(
             controller: _usdAccountController,
-            hint: 'Bank Account',
+            hint: 'Account Number',
             keyboardType: TextInputType.number,
+          ),
+
+          const SizedBox(height: 22),
+
+          // Mobile Money section
+          _buildSectionLabel('Mobile Money'),
+          const SizedBox(height: 10),
+          _buildDropdown(
+            hint: 'Mobile Money Provider',
+            value: _selectedMobileMoney,
+            items: _mobileMoneyOptions
+                .map((e) => {'label': e, 'value': e})
+                .toList(),
+            onChanged: (v) => setState(() => _selectedMobileMoney = v),
+          ),
+          const SizedBox(height: 12),
+          _buildTextField(
+            controller: _mobileMoneyNumberController,
+            hint: 'Mobile Money Number',
+            keyboardType: TextInputType.phone,
           ),
 
           const SizedBox(height: 32),
@@ -413,14 +813,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       child: Column(
         children: [
-          const Text(
-            'Security Questions',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          _buildStepTitle('Security Questions'),
           const SizedBox(height: 24),
           _buildTextField(
             controller: _maidenNameController,
@@ -441,14 +834,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
             showBack: true,
             nextLabel: 'SIGN UP',
             isLastStep: true,
-            onNext: () {
-              Navigator.pushAndRemoveUntil(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const LoginScreen()),
-                    (route) => false,
-              );
-            },
+            onNext: _submitRegistration,
           ),
         ],
       ),
@@ -458,6 +844,29 @@ class _SignUpScreenState extends State<SignUpScreen> {
   // ─────────────────────────────────────────────────────────────────────
   // Reusable Widgets
   // ─────────────────────────────────────────────────────────────────────
+  Widget _buildStepTitle(String title) {
+    return Text(
+      title,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 20,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+
+  Widget _buildSectionLabel(String label) {
+    return Text(
+      label,
+      style: TextStyle(
+        color: Colors.white.withOpacity(0.75),
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.3,
+      ),
+    );
+  }
+
   Widget _buildTextField({
     required TextEditingController controller,
     required String hint,
@@ -491,10 +900,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
     );
   }
 
+  /// Generic dropdown — items must have 'label' and 'value' keys
   Widget _buildDropdown({
     required String hint,
     required String? value,
-    required List<String> items,
+    required List<Map<String, String>> items,
     required ValueChanged<String?> onChanged,
   }) {
     return Container(
@@ -519,9 +929,54 @@ class _SignUpScreenState extends State<SignUpScreen> {
           style: const TextStyle(
               color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
           items: items
-              .map((e) => DropdownMenuItem(value: e, child: Text(e)))
+              .map((e) =>
+              DropdownMenuItem(value: e['value'], child: Text(e['label']!)))
               .toList(),
           onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+
+  /// Bank dropdown — built from fetched API data, displays Name, sends Code
+  Widget _buildBankDropdown({
+    required String hint,
+    required String? value,
+    required ValueChanged<String?> onChanged,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.25),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(
+            color: const Color(0xFFD4A017).withOpacity(0.7), width: 1.5),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          hint: Text(
+            _loadingBanks ? 'Loading banks...' : hint,
+            style: TextStyle(
+                color: Colors.white.withOpacity(0.65), fontSize: 15),
+          ),
+          icon: const Icon(Icons.arrow_drop_down_rounded,
+              color: Colors.white70),
+          dropdownColor: const Color(0xFF2D2D2D),
+          borderRadius: BorderRadius.circular(16),
+          style: const TextStyle(
+              color: Colors.white, fontSize: 15, fontWeight: FontWeight.w500),
+          items: _banks
+              .map((bank) => DropdownMenuItem(
+            value: bank['code'],
+            child: Text(
+              bank['name']!,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ))
+              .toList(),
+          onChanged: _loadingBanks ? null : onChanged,
         ),
       ),
     );
@@ -569,7 +1024,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
         ],
         Expanded(
           child: GestureDetector(
-            onTap: onNext,
+            onTap: _isLoading ? null : onNext,
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 16),
               decoration: BoxDecoration(
@@ -583,7 +1038,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   ),
                 ],
               ),
-              child: Text(
+              child: _isLoading && isLastStep
+                  ? const Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                      color: Colors.white, strokeWidth: 2.5),
+                ),
+              )
+                  : Text(
                 nextLabel,
                 textAlign: TextAlign.center,
                 style: const TextStyle(

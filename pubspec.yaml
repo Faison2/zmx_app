@@ -14,6 +14,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.6.0
   shared_preferences: ^2.5.4
+  audioplayers: ^6.6.0
 
 dev_dependencies:
   flutter_test:
@@ -27,6 +28,7 @@ flutter:
   assets:
     - assets/images/splash.png
     - assets/images/logo.png
+    - assets/sounds/
 
 flutter_icons:
   android: true
