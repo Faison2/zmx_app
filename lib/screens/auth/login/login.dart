@@ -43,47 +43,36 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      final uri = Uri.parse(
-        'https://system.zmx.co.zw/ZMX-API/Subscriber/authuser'
-            '?idNumber=${Uri.encodeComponent(email)}'
-            '&pass=${Uri.encodeComponent(password)}',
-      );
+      final uri = Uri.parse('https://myapi.zmx.co.zw/v1/auth/login');
 
-      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+      final response = await http.post(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({'email': email, 'password': password}),
+      ).timeout(const Duration(seconds: 15));
 
       if (!mounted) return;
 
       if (response.statusCode == 200) {
-        final body = response.body.trim();
+        final Map<String, dynamic> data = jsonDecode(response.body);
 
-        // API returns plain "0" for wrong credentials (status is still 200)
-        if (body == '0') {
-          setState(() => _errorMessage = 'Invalid email or password. Please try again.');
+        // Check for failed login via message field
+        if (data['token'] == null) {
+          setState(() => _errorMessage = data['message'] ?? 'Login failed. Please try again.');
           return;
         }
 
-        // Parse the JSON array response
-        final List<dynamic> data = jsonDecode(body);
-
-        if (data.isEmpty) {
-          setState(() => _errorMessage = 'No account found. Please try again.');
-          return;
-        }
-
-        final user = data[0] as Map<String, dynamic>;
-
-        // Save all user fields to SharedPreferences
+        // Save user details to SharedPreferences
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('user_id',           user['id']?.toString() ?? '');
-        await prefs.setString('user_brokerName',   user['brokerName']?.toString() ?? '');
-        await prefs.setString('user_broker',       user['broker']?.toString() ?? '');
-        await prefs.setString('user_cds',          user['cds']?.toString() ?? '');
-        await prefs.setString('user_email',        user['email']?.toString() ?? '');
-        await prefs.setString('user_name',         user['name']?.toString() ?? '');
-        await prefs.setString('user_phone',        user['phone']?.toString() ?? '');
-        await prefs.setString('user_pin',          user['pin']?.toString() ?? '');
-        await prefs.setString('user_has_company',  user['has_company']?.toString() ?? '');
-        await prefs.setString('user_account_type', user['account_type']?.toString() ?? '');
+        await prefs.setString('user_token',       data['token'] ?? '');
+        await prefs.setString('user_email',        data['email'] ?? '');
+        await prefs.setString('user_username',     data['username'] ?? '');
+        await prefs.setString('user_full_name',    data['fullName'] ?? '');
+        await prefs.setString('user_cds_number',   data['cdsNumber'] ?? '');
+        await prefs.setString('user_phone',        data['phoneNumber'] ?? '');
         await prefs.setBool('is_logged_in', true);
 
         if (!mounted) return;
@@ -93,14 +82,15 @@ class _LoginScreenState extends State<LoginScreen> {
           MaterialPageRoute(builder: (_) => const DashboardScreen()),
         );
       } else {
+        final body = jsonDecode(response.body);
         setState(() {
-          _errorMessage = 'Server error (${response.statusCode}). Please try again.';
+          _errorMessage = body['message'] ?? 'Server error (${response.statusCode}). Please try again.';
         });
       }
-    } on http.ClientException {
-      setState(() => _errorMessage = 'Network error. Check your connection.');
+    } on http.ClientException catch (e) {
+      setState(() => _errorMessage = 'Network error: ${e.message}');
     } catch (e) {
-      setState(() => _errorMessage = 'An unexpected error occurred.');
+      setState(() => _errorMessage = 'Error: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

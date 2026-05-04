@@ -341,7 +341,7 @@ class AuctionResultModel {
 // API SERVICE
 // ─────────────────────────────────────────────────────────────────────────────
 class AuctionService {
-  static const _base = 'https://ussd.zmx.co.zw';
+  static const _base = 'https://myapi.zmx.co.zw';
 
   static Future<List<AuctionModel>> fetchAll() async {
     final res = await http.get(Uri.parse('$_base/v1/auction/all'))
