@@ -45,34 +45,33 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final uri = Uri.parse('https://myapi.zmx.co.zw/v1/auth/login');
 
-      final response = await http.post(
+      final response = await http
+          .post(
         uri,
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
-        body: jsonEncode({'email': email, 'password': password}),
-      ).timeout(const Duration(seconds: 15));
+        body: jsonEncode({
+          'email': email,
+          'password': password,
+        }),
+      )
+          .timeout(const Duration(seconds: 15));
 
       if (!mounted) return;
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
 
-        // Check for failed login via message field
-        if (data['token'] == null) {
-          setState(() => _errorMessage = data['message'] ?? 'Login failed. Please try again.');
-          return;
-        }
-
-        // Save user details to SharedPreferences
+        // Save all user fields to SharedPreferences
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('user_token',       data['token'] ?? '');
-        await prefs.setString('user_email',        data['email'] ?? '');
-        await prefs.setString('user_username',     data['username'] ?? '');
-        await prefs.setString('user_full_name',    data['fullName'] ?? '');
-        await prefs.setString('user_cds_number',   data['cdsNumber'] ?? '');
-        await prefs.setString('user_phone',        data['phoneNumber'] ?? '');
+        await prefs.setString('user_token',       data['token']?.toString() ?? '');
+        await prefs.setString('user_name',        data['fullName']?.toString() ?? '');
+        await prefs.setString('user_cds',         data['cdsNumber']?.toString() ?? '');
+        await prefs.setString('user_phone',       data['phoneNumber']?.toString() ?? '');
+        await prefs.setString('user_email',       data['email']?.toString() ?? '');
+        await prefs.setString('user_username',    data['username']?.toString() ?? '');
         await prefs.setBool('is_logged_in', true);
 
         if (!mounted) return;
@@ -82,15 +81,23 @@ class _LoginScreenState extends State<LoginScreen> {
           MaterialPageRoute(builder: (_) => const DashboardScreen()),
         );
       } else {
-        final body = jsonDecode(response.body);
-        setState(() {
-          _errorMessage = body['message'] ?? 'Server error (${response.statusCode}). Please try again.';
-        });
+        // Try to parse error message from response body
+        try {
+          final errorData = jsonDecode(response.body);
+          setState(() {
+            _errorMessage = errorData['message']?.toString() ??
+                'Server error (${response.statusCode}). Please try again.';
+          });
+        } catch (_) {
+          setState(() {
+            _errorMessage = 'Server error (${response.statusCode}). Please try again.';
+          });
+        }
       }
-    } on http.ClientException catch (e) {
-      setState(() => _errorMessage = 'Network error: ${e.message}');
+    } on http.ClientException {
+      setState(() => _errorMessage = 'Network error. Check your connection.');
     } catch (e) {
-      setState(() => _errorMessage = 'Error: $e');
+      setState(() => _errorMessage = 'An unexpected error occurred.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
