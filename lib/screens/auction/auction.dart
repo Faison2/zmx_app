@@ -83,7 +83,6 @@ class AuctionModel {
   final String? securityType;
   final String? issuerName;
   final double  totalVolume;
-  // CHANGED: nullable — API now sends null for some auctions
   final double? minBidAmount;
   final double? maxBidAmount;
   final double  bidIncrement;
@@ -91,7 +90,6 @@ class AuctionModel {
   final String  endDate;
   final DateTime startDateRaw;
   final DateTime endDateRaw;
-  // NEW: live end time that accounts for extensions; drives the countdown
   final DateTime? currentEndTimeRaw;
   final String? settlementDate;
   final String  status;
@@ -103,7 +101,6 @@ class AuctionModel {
   final double? maximumYield;
   final bool    isCommodityAuction;
   final double? reservePrice;
-  // NEW: hard ceiling price (separate from maxBidAmount)
   final double? maximumBidPrice;
   final String? lotNumber;
   final String? auctionDayDate;
@@ -155,7 +152,6 @@ class AuctionModel {
     DateTime ps; try { ps = DateTime.parse(rawStart); } catch (_) { ps = DateTime.now(); }
     DateTime pe; try { pe = DateTime.parse(rawEnd);   } catch (_) { pe = DateTime.now(); }
 
-    // NEW: parse currentEndTime; falls back to null (countdown uses endDateRaw)
     DateTime? currentEndTimeRaw;
     final rawCET = json['currentEndTime'] as String?;
     if (rawCET != null) {
@@ -170,7 +166,6 @@ class AuctionModel {
       securityType: json['securityType'] as String?,
       issuerName:   json['issuerName']   as String?,
       totalVolume:  (json['totalVolume'] as num).toDouble(),
-      // CHANGED: null-guarded — this was causing the crash
       minBidAmount: json['minBidAmount'] != null
           ? (json['minBidAmount'] as num).toDouble() : null,
       maxBidAmount: json['maxBidAmount'] != null
@@ -197,7 +192,6 @@ class AuctionModel {
       isCommodityAuction: json['isCommodityAuction'] as bool? ?? false,
       reservePrice: json['reservePrice'] != null
           ? (json['reservePrice'] as num).toDouble() : null,
-      // NEW
       maximumBidPrice: json['maximumBidPrice'] != null
           ? (json['maximumBidPrice'] as num).toDouble() : null,
       lotNumber:      json['lotNumber']      as String?,
@@ -238,13 +232,11 @@ class AuctionModel {
   String get formattedTotalVolume => isCommodityAuction
       ? '${totalVolume.toStringAsFixed(0)} T' : '\$${_cmp(totalVolume)}';
 
-  // CHANGED: null-safe display
   String get formattedMinBid =>
       minBidAmount != null ? '\$${_cmp(minBidAmount!)}' : '—';
   String get formattedMaxBid =>
       maxBidAmount != null ? '\$${_cmp(maxBidAmount!)}' : '—';
 
-  // NEW: effective ceiling — prefer maximumBidPrice, fall back to maxBidAmount
   double? get effectiveMaxPrice => maximumBidPrice ?? maxBidAmount;
   String get formattedEffectiveMaxPrice =>
       effectiveMaxPrice != null ? '\$${_cmp(effectiveMaxPrice!)}' : '—';
@@ -259,8 +251,6 @@ class AuctionModel {
   String get formattedHighestBid    => currentHighestBid != null
       ? '\$${currentHighestBid!.toStringAsFixed(2)}' : 'No bids yet';
 
-  // Countdown target: use currentEndTimeRaw when available (reflects extensions),
-  // otherwise fall back to the scheduled endDateRaw.
   DateTime get effectiveEndTime => currentEndTimeRaw ?? endDateRaw;
 
   static String _cmp(double v) {
@@ -427,8 +417,6 @@ class AuctionService {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COUNTDOWN WIDGET
-// CHANGED: uses auction.effectiveEndTime (currentEndTimeRaw ?? endDateRaw)
-//          so auction extensions are automatically reflected.
 // ─────────────────────────────────────────────────────────────────────────────
 enum _CMode { pending, active, ended }
 
@@ -453,7 +441,6 @@ class _AuctionCountdownState extends State<_AuctionCountdown> {
 
   void _compute() {
     final now          = DateTime.now();
-    // CHANGED: use effectiveEndTime so extensions shift the countdown target
     final effectiveEnd = widget.auction.effectiveEndTime;
     if (now.isBefore(widget.auction.startDateRaw)) {
       _mode      = _CMode.pending;
@@ -507,7 +494,6 @@ class _AuctionCountdownState extends State<_AuctionCountdown> {
         const SizedBox(width: 7),
         Text(_label, style: TextStyle(fontSize: 11,
             fontWeight: FontWeight.w700, color: c.withOpacity(0.75))),
-        // NEW: show extension badge when extensions have occurred
         if (widget.auction.totalExtensions > 0) ...[
           const SizedBox(width: 6),
           Container(
@@ -551,14 +537,36 @@ class _AuctionContentState extends State<AuctionContent>
   bool      _silentLoad = false;
   String?   _error;
   String    _filter     = 'ALL';
+  DateTime? _selectedDate;           // ← date filter
   DateTime? _lastUpdated;
   Timer?    _autoRefresh;
 
   final _filters = ['ALL', 'ACTIVE', 'PENDING', 'CLOSED'];
 
-  List<AuctionModel> get _filtered => _filter == 'ALL'
-      ? _auctions
-      : _auctions.where((a) => a.status == _filter).toList();
+  // ── Sorted most-recent-first + optional date filter ───────────────────────
+  List<AuctionModel> get _filtered {
+    // 1. Status filter
+    var list = _filter == 'ALL'
+        ? List<AuctionModel>.from(_auctions)
+        : _auctions.where((a) => a.status == _filter).toList();
+
+    // 2. Date filter — keep auctions whose window covers the selected date
+    if (_selectedDate != null) {
+      final sel = DateTime(
+          _selectedDate!.year, _selectedDate!.month, _selectedDate!.day);
+      list = list.where((a) {
+        final start = DateTime(
+            a.startDateRaw.year, a.startDateRaw.month, a.startDateRaw.day);
+        final end = DateTime(a.effectiveEndTime.year,
+            a.effectiveEndTime.month, a.effectiveEndTime.day);
+        return !sel.isBefore(start) && !sel.isAfter(end);
+      }).toList();
+    }
+
+    // 3. Most recent (latest startDate) first
+    list.sort((a, b) => b.startDateRaw.compareTo(a.startDateRaw));
+    return list;
+  }
 
   @override
   void initState() {
@@ -620,6 +628,42 @@ class _AuctionContentState extends State<AuctionContent>
     _autoRefresh?.cancel();
     _fc.dispose();
     super.dispose();
+  }
+
+  // ── Date picker ───────────────────────────────────────────────────────────
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      builder: (ctx, child) => Theme(
+        data: ThemeData.light().copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: Color(0xFF2DB144),
+            onPrimary: Colors.white,
+            surface: Colors.white,
+            onSurface: Color(0xFF1A1A1A),
+          ),
+          dialogBackgroundColor: Colors.white,
+          textButtonTheme: TextButtonThemeData(
+            style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF2DB144)),
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) setState(() => _selectedDate = picked);
+  }
+
+  // ── Human-readable date label ─────────────────────────────────────────────
+  String _fmtDate(DateTime d) {
+    const m = [
+      'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec'
+    ];
+    return '${d.day} ${m[d.month - 1]} ${d.year}';
   }
 
   void _openBidSheet(AuctionModel auction) async {
@@ -707,14 +751,38 @@ class _AuctionContentState extends State<AuctionContent>
     ]),
   ));
 
-  Widget _buildEmpty() => const Padding(
-      padding: EdgeInsets.symmetric(vertical: 60),
-      child: Column(children: [
-        Icon(Icons.gavel_rounded, size: 48, color: Colors.grey),
-        SizedBox(height: 12),
-        Text('No auctions found', style: TextStyle(
-            color: Colors.grey, fontSize: 15, fontWeight: FontWeight.w600)),
-      ]));
+  // ── Empty state — shows hint to clear date filter when active ─────────────
+  Widget _buildEmpty() => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 60),
+    child: Column(children: [
+      const Icon(Icons.gavel_rounded, size: 48, color: Colors.grey),
+      const SizedBox(height: 12),
+      const Text('No auctions found', style: TextStyle(
+          color: Colors.grey, fontSize: 15, fontWeight: FontWeight.w600)),
+      if (_selectedDate != null) ...[
+        const SizedBox(height: 8),
+        Text('for ${_fmtDate(_selectedDate!)}',
+            style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
+        const SizedBox(height: 16),
+        GestureDetector(
+          onTap: () => setState(() => _selectedDate = null),
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 18, vertical: 9),
+            decoration: BoxDecoration(
+                color: const Color(0xFFD4A017).withOpacity(0.10),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                    color: const Color(0xFFD4A017).withOpacity(0.45))),
+            child: const Text('Clear date filter',
+                style: TextStyle(fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFD4A017))),
+          ),
+        ),
+      ],
+    ]),
+  );
 
   Widget _buildHeader() {
     final active = _auctions.where((a) => a.status == 'ACTIVE').length;
@@ -788,39 +856,137 @@ class _AuctionContentState extends State<AuctionContent>
     );
   }
 
-  Widget _buildFilterBar() => SizedBox(
-    height: 36,
-    child: ListView.separated(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      itemCount: _filters.length,
-      separatorBuilder: (_, __) => const SizedBox(width: 8),
-      itemBuilder: (context, i) {
-        final f   = _filters[i];
-        final sel = _filter == f;
-        final cnt = f == 'ALL' ? _auctions.length
-            : _auctions.where((a) => a.status == f).length;
-        return GestureDetector(
-          onTap: () => setState(() => _filter = f),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            padding: const EdgeInsets.symmetric(
-                horizontal: 14, vertical: 7),
-            decoration: BoxDecoration(
-                gradient: sel ? const LinearGradient(
-                    colors: [Color(0xFF2DB144),
-                      Color(0xFF1E8E32)]) : null,
-                color: sel ? null : Colors.grey.shade100,
+  // ── Filter bar: status chips + date picker row ────────────────────────────
+  Widget _buildFilterBar() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      // ── Status chips ──────────────────────────────────────────────────────
+      SizedBox(
+        height: 36,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          itemCount: _filters.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, i) {
+            final f   = _filters[i];
+            final sel = _filter == f;
+            final cnt = f == 'ALL'
+                ? _auctions.length
+                : _auctions.where((a) => a.status == f).length;
+            return GestureDetector(
+              onTap: () => setState(() => _filter = f),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                    gradient: sel
+                        ? const LinearGradient(colors: [
+                      Color(0xFF2DB144), Color(0xFF1E8E32)]) : null,
+                    color: sel ? null : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: sel
+                            ? const Color(0xFF2DB144)
+                            : Colors.grey.shade300)),
+                child: Text('$f ($cnt)', style: TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w700,
+                    color: sel ? Colors.white : Colors.grey.shade600)),
+              ),
+            );
+          },
+        ),
+      ),
+
+      // ── Date filter row ───────────────────────────────────────────────────
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+        child: Row(children: [
+
+          // Date picker chip
+          GestureDetector(
+            onTap: _pickDate,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                color: _selectedDate != null
+                    ? const Color(0xFFD4A017).withOpacity(0.12)
+                    : Colors.grey.shade100,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: sel
-                    ? const Color(0xFF2DB144) : Colors.grey.shade300)),
-            child: Text('$f ($cnt)', style: TextStyle(
-                fontSize: 12, fontWeight: FontWeight.w700,
-                color: sel ? Colors.white : Colors.grey.shade600)),
+                border: Border.all(
+                  color: _selectedDate != null
+                      ? const Color(0xFFD4A017).withOpacity(0.55)
+                      : Colors.grey.shade300,
+                ),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.calendar_today_rounded,
+                    size: 13,
+                    color: _selectedDate != null
+                        ? const Color(0xFFD4A017)
+                        : Colors.grey.shade500),
+                const SizedBox(width: 6),
+                Text(
+                  _selectedDate != null
+                      ? _fmtDate(_selectedDate!)
+                      : 'Filter by date',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: _selectedDate != null
+                          ? const Color(0xFFD4A017)
+                          : Colors.grey.shade600),
+                ),
+              ]),
+            ),
           ),
-        );
-      },
-    ),
+
+          // Clear date button — only shown when a date is active
+          if (_selectedDate != null) ...[
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => setState(() => _selectedDate = null),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Icon(Icons.close_rounded,
+                    size: 14, color: Colors.grey.shade500),
+              ),
+            ),
+          ],
+
+          const Spacer(),
+
+          // Result count badge
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Text(
+              '${_filtered.length} '
+                  '${_filtered.length == 1 ? 'auction' : 'auctions'}',
+              style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600),
+            ),
+          ),
+        ]),
+      ),
+
+      const SizedBox(height: 8),
+    ],
   );
 
   Color _statusColor(String s) =>
@@ -915,8 +1081,6 @@ class _AuctionContentState extends State<AuctionContent>
               _AuctionCountdown(auction: a),
               const SizedBox(height: 10),
 
-              // CHANGED: uses null-safe getters; MAX BID now shows
-              // effectiveMaxPrice (maximumBidPrice ?? maxBidAmount)
               Container(
                 margin: const EdgeInsets.fromLTRB(12, 0, 12, 0),
                 padding: const EdgeInsets.symmetric(
@@ -974,7 +1138,6 @@ class _AuctionContentState extends State<AuctionContent>
                           color: Colors.grey.shade500,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.5)),
-                      // CHANGED: null-safe
                       Text(
                         '${a.formattedMinBid} – ${a.formattedEffectiveMaxPrice}'
                             '  ·  +${a.formattedBidIncrement} step',
@@ -1400,7 +1563,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                   color: Colors.white, fontSize: 16,
                   fontWeight: FontWeight.w900)),
               const SizedBox(height: 6),
-              // CHANGED: null-safe using formatted getters
               Text(
                 'Min: ${a.formattedMinBid}  |  '
                     'Max: ${a.formattedEffectiveMaxPrice}  |  '
@@ -1417,7 +1579,6 @@ class _PlaceBidSheetState extends State<_PlaceBidSheet> {
                       color: Colors.white.withOpacity(0.55)),
                 ),
               ],
-              // NEW: show maximumBidPrice when it differs from maxBidAmount
               if (a.maximumBidPrice != null &&
                   a.maximumBidPrice != a.maxBidAmount) ...[
                 const SizedBox(height: 4),
@@ -1770,10 +1931,8 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
         const SizedBox(width: 12),
         Expanded(child: _card('VOLUME & PRICING', [
           _row('Total Volume', a.formattedTotalVolume),
-          // CHANGED: null-safe
           _row('Min Bid',  a.formattedMinBid),
           _row('Max Bid',  a.formattedMaxBid),
-          // NEW: maximumBidPrice row when it exists
           if (a.maximumBidPrice != null)
             _row('Max Price Cap', a.formattedMaximumBidPrice,
                 vc: const Color(0xFFD4A017)),
@@ -1835,7 +1994,6 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
         Expanded(child: _card('TIMELINE', [
           _row('Start', a.startDate),
           _row('End',   a.endDate),
-          // NEW: effective end when it differs from scheduled
           if (a.currentEndTimeRaw != null &&
               a.currentEndTimeRaw != a.endDateRaw)
             _row('Effective End',
