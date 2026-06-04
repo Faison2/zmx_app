@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../profile/profile.dart';
 
-
-class AppDrawer extends StatelessWidget {
+class AppDrawer extends StatefulWidget {           // ← was StatelessWidget
   final int selectedIndex;
   final ValueChanged<int> onNavTap;
 
@@ -12,6 +12,28 @@ class AppDrawer extends StatelessWidget {
     required this.selectedIndex,
     required this.onNavTap,
   });
+
+  @override
+  State<AppDrawer> createState() => _AppDrawerState();
+}
+
+class _AppDrawerState extends State<AppDrawer> {
+  String _name = '';
+  String _cds  = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _name = prefs.getString('user_name') ?? '-';
+      _cds  = prefs.getString('user_cds')  ?? '-';
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -60,7 +82,7 @@ class AppDrawer extends StatelessWidget {
                 child: GestureDetector(
                   onTap: () {
                     Navigator.pop(context);
-                    Navigator.push( // 👈 changed
+                    Navigator.push(
                       context,
                       MaterialPageRoute(
                           builder: (_) => const ProfileScreen()),
@@ -98,17 +120,17 @@ class AppDrawer extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'Tafadzwa Moyo',
-                                style: TextStyle(
+                              Text(                        // ← dynamic
+                                _name,
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 15,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
                               const SizedBox(height: 3),
-                              Text(
-                                '0/535411',
+                              Text(                        // ← dynamic
+                                _cds,
                                 style: TextStyle(
                                   color: Colors.white.withOpacity(0.55),
                                   fontSize: 12,
@@ -148,14 +170,13 @@ class AppDrawer extends StatelessWidget {
                     Divider(color: Colors.white.withOpacity(0.1), height: 1),
                     const SizedBox(height: 12),
 
-                    // Profile link
                     _drawerAction(
                       context,
                       icon: Icons.person_rounded,
                       label: 'My Profile',
                       onTap: () {
                         Navigator.pop(context);
-                        Navigator.push( // 👈 changed
+                        Navigator.push(
                           context,
                           MaterialPageRoute(
                               builder: (_) => const ProfileScreen()),
@@ -184,7 +205,7 @@ class AppDrawer extends StatelessWidget {
                 child: GestureDetector(
                   onTap: () {
                     Navigator.pop(context);
-                    Navigator.pushAndRemoveUntil( // 👈 changed
+                    Navigator.pushAndRemoveUntil(
                       context,
                       MaterialPageRoute(builder: (_) => const LoginPlaceholder()),
                           (route) => false,
@@ -228,11 +249,11 @@ class AppDrawer extends StatelessWidget {
       {required IconData icon,
         required String label,
         required int index}) {
-    final isSelected = selectedIndex == index;
+    final isSelected = widget.selectedIndex == index;  // ← widget.selectedIndex
     return GestureDetector(
       onTap: () {
         Navigator.pop(context);
-        onNavTap(index);
+        widget.onNavTap(index);                        // ← widget.onNavTap
       },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
@@ -314,7 +335,6 @@ class AppDrawer extends StatelessWidget {
   }
 }
 
-// Temporary placeholder — replace with your actual LoginScreen import
 class LoginPlaceholder extends StatelessWidget {
   const LoginPlaceholder({super.key});
   @override
