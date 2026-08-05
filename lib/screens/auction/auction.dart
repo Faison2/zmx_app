@@ -1106,7 +1106,9 @@ class _AuctionContentState extends State<AuctionContent>
                     ]),
               ),
 
-              if (a.isCommodityAuction && a.currentHighestBid != null)
+              // ── Highest bid per lot — shown for ANY auction/lot that has
+              //    received a bid, not just commodity auctions ──────────────
+              if (a.currentHighestBid != null)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
                   child: Container(
@@ -1121,10 +1123,15 @@ class _AuctionContentState extends State<AuctionContent>
                       const Icon(Icons.trending_up_rounded,
                           size: 16, color: Color(0xFF2DB144)),
                       const SizedBox(width: 8),
-                      Text('Highest Bid: ${a.formattedHighestBid}',
+                      Expanded(
+                        child: Text(
+                          'Highest Bid: ${a.formattedHighestBid}',
+                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 13,
                               fontWeight: FontWeight.w800,
-                              color: Color(0xFF2DB144))),
+                              color: Color(0xFF2DB144)),
+                        ),
+                      ),
                     ]),
                   ),
                 ),
@@ -1937,11 +1944,12 @@ class _AuctionDetailsScreenState extends State<_AuctionDetailsScreen>
             _row('Max Price Cap', a.formattedMaximumBidPrice,
                 vc: const Color(0xFFD4A017)),
           _row('Bid Step', a.formattedBidIncrement),
+          // ── Highest bid shown for ANY lot with a bid, not just commodity ──
+          if (a.currentHighestBid != null)
+            _row('Highest Bid', a.formattedHighestBid,
+                vc: const Color(0xFF2DB144)),
           if (a.isCommodityAuction) ...[
             _row('Reserve Price', a.formattedReservePrice),
-            _row('Highest Bid',   a.formattedHighestBid,
-                vc: a.currentHighestBid != null
-                    ? const Color(0xFF2DB144) : null),
             _row('Extensions', '${a.totalExtensions}'),
           ] else ...[
             _row('Coupon Rate', a.formattedCouponRate),
