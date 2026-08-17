@@ -1,4 +1,45 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Model
+// ─────────────────────────────────────────────────────────────────────────────
+class Delivery {
+  final String id;
+  final String commodity;
+  final String quantity;
+  final String unit;
+  final String status;
+  final String date;
+  final String warehouse;
+  final String pickupLocation;
+
+  Delivery({
+    required this.id,
+    required this.commodity,
+    required this.quantity,
+    required this.unit,
+    required this.status,
+    required this.date,
+    required this.warehouse,
+    required this.pickupLocation,
+  });
+
+  factory Delivery.fromJson(Map<String, dynamic> json) {
+    return Delivery(
+      id: json['id']?.toString() ?? '',
+      commodity: json['commodity'] as String? ?? json['name'] as String? ?? '',
+      quantity: json['quantity']?.toString() ?? '0',
+      unit: json['unit'] as String? ?? 'KG',
+      status: json['status'] as String? ?? 'Pending',
+      date: json['date'] as String? ?? '',
+      warehouse: json['warehouse'] as String? ?? '',
+      pickupLocation: json['pickupLocation'] as String? ?? json['location'] as String? ?? '',
+    );
+  }
+}
 
 class DeliveriesContent extends StatefulWidget {
   const DeliveriesContent({super.key});
@@ -12,20 +53,9 @@ class _DeliveriesContentState extends State<DeliveriesContent>
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
 
-  final List<Map<String, String>> _deliveries = [
-    {'name': 'Red Sorghum', 'quantity': '100', 'unit': 'KG', 'status': 'Pending'},
-    {'name': 'Maize', 'quantity': '250', 'unit': 'KG', 'status': 'In Transit'},
-    {'name': 'Wheat', 'quantity': '180', 'unit': 'KG', 'status': 'Delivered'},
-    {'name': 'Red Sorghum', 'quantity': '100', 'unit': 'KG', 'status': 'Pending'},
-    {'name': 'Soya Beans', 'quantity': '320', 'unit': 'KG', 'status': 'In Transit'},
-    {'name': 'Red Sorghum', 'quantity': '100', 'unit': 'KG', 'status': 'Pending'},
-    {'name': 'Cotton', 'quantity': '90', 'unit': 'KG', 'status': 'Delivered'},
-    {'name': 'Red Sorghum', 'quantity': '100', 'unit': 'KG', 'status': 'Pending'},
-    {'name': 'Millet', 'quantity': '210', 'unit': 'KG', 'status': 'Pending'},
-    {'name': 'Red Sorghum', 'quantity': '100', 'unit': 'KG', 'status': 'In Transit'},
-    {'name': 'Red Sorghum', 'quantity': '100', 'unit': 'KG', 'status': 'Pending'},
-    {'name': 'Tobacco', 'quantity': '75', 'unit': 'KG', 'status': 'Delivered'},
-  ];
+  List<Delivery> _deliveries = [];
+  bool _isLoading = true;
+  String? _errorMessage;
 
   @override
   void initState() {
@@ -34,13 +64,74 @@ class _DeliveriesContentState extends State<DeliveriesContent>
         vsync: this, duration: const Duration(milliseconds: 450));
     _fadeAnimation =
         CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut);
-    _fadeController.forward();
+    _loadDeliveries();
   }
 
   @override
   void dispose() {
     _fadeController.dispose();
     super.dispose();
+  }
+
+  // ── Fetch deliveries from API ──────────────────────────────────────────────
+  Future<void> _loadDeliveries() async {
+    setState(() { _isLoading = true; _errorMessage = null; });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cds = prefs.getString('user_cds') ?? '';
+
+      if (cds.isEmpty) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'CDS number not found. Please log in again.';
+        });
+        return;
+      }
+
+      final uri = Uri.parse(
+          'https://system.zmx.co.zw/ZMX-API/Subscriber/GetDeliveries?cds_number=$cds');
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        List<Map<String, dynamic>> items = [];
+
+        if (data is List) {
+          items = List<Map<String, dynamic>>.from(data);
+        } else if (data is Map<String, dynamic>) {
+          if (data.containsKey('data') && data['data'] is List) {
+            items = List<Map<String, dynamic>>.from(data['data']);
+          } else if (data.containsKey('deliveries') && data['deliveries'] is List) {
+            items = List<Map<String, dynamic>>.from(data['deliveries']);
+          } else {
+            items = [data];
+          }
+        }
+
+        final deliveries = items.map((e) => Delivery.fromJson(e)).toList();
+
+        if (!mounted) return;
+        setState(() {
+          _deliveries = deliveries;
+          _isLoading = false;
+        });
+        _fadeController.forward();
+      } else {
+        if (!mounted) return;
+        setState(() {
+          _isLoading = false;
+          _errorMessage = 'Failed to load deliveries (${response.statusCode})';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Network error. Please check your connection.';
+      });
+    }
   }
 
   Color _statusColor(String status) {
@@ -81,22 +172,87 @@ class _DeliveriesContentState extends State<DeliveriesContent>
       child: Stack(
         children: [
           // ── List ──────────────────────────────────────────────────
-          ListView(
-            padding: EdgeInsets.only(
-              top: 4,
-              bottom: MediaQuery.of(context).padding.bottom + 100,
-            ),
-            children: [
-              _buildHeader(),
-              _buildDeliveriesContainer(),
-            ],
-          ),
+          _isLoading
+              ? const Center(child: CircularProgressIndicator(color: Color(0xFF2DB144)))
+              : _errorMessage != null
+                  ? _buildErrorState()
+                  : _deliveries.isEmpty
+                      ? _buildEmptyState()
+                      : ListView(
+                          padding: EdgeInsets.only(
+                            top: 4,
+                            bottom: MediaQuery.of(context).padding.bottom + 100,
+                          ),
+                          children: [
+                            _buildHeader(),
+                            _buildDeliveriesContainer(),
+                          ],
+                        ),
 
           // ── FAB ───────────────────────────────────────────────────
-          Positioned(
-            bottom: MediaQuery.of(context).padding.bottom + 90,
-            right: 20,
-            child: _buildFAB(),
+          if (!_isLoading)
+            Positioned(
+              bottom: MediaQuery.of(context).padding.bottom + 90,
+              right: 20,
+              child: _buildFAB(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline_rounded, size: 64, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            Text(
+              _errorMessage!,
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 24),
+            GestureDetector(
+              onTap: _loadDeliveries,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF2DB144), Color(0xFF1E8E32)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Text(
+                  'Retry',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.local_shipping_outlined, size: 64, color: Colors.grey.shade400),
+          const SizedBox(height: 16),
+          Text(
+            'No deliveries found',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your deliveries will appear here',
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
           ),
         ],
       ),
@@ -173,8 +329,8 @@ class _DeliveriesContentState extends State<DeliveriesContent>
     );
   }
 
-  Widget _buildDeliveryCard(Map<String, String> item, int index) {
-    final status = item['status']!;
+  Widget _buildDeliveryCard(Delivery item, int index) {
+    final status = item.status;
     final statusColor = _statusColor(status);
     final statusIcon = _statusIcon(status);
 
@@ -221,7 +377,7 @@ class _DeliveriesContentState extends State<DeliveriesContent>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    item['name']!,
+                    item.commodity,
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
@@ -254,7 +410,7 @@ class _DeliveriesContentState extends State<DeliveriesContent>
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  'Quantity: ${item['quantity']}',
+                  'Quantity: ${item.quantity}',
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
@@ -263,7 +419,7 @@ class _DeliveriesContentState extends State<DeliveriesContent>
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Unit: ${item['unit']}',
+                  'Unit: ${item.unit}',
                   style: TextStyle(
                     fontSize: 12,
                     color: Colors.grey.shade600,
