@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -19,6 +21,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String _hasCompany   = '';
   String _accountType  = '';
 
+  // ── Live client details (from getAllDetails) ────────────────────────────
+  String? _cashBank;
+  bool _isLoadingDetails = false;
+
   @override
   void initState() {
     super.initState();
@@ -27,9 +33,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
+    final cds   = prefs.getString('user_cds')  ?? '-';
+    final token = prefs.getString('user_token') ?? '';
     setState(() {
       _name        = prefs.getString('user_name')         ?? '-';
-      _cds         = prefs.getString('user_cds')          ?? '-';
+      _cds         = cds;
       _email       = prefs.getString('user_email')        ?? '-';
       _phone       = prefs.getString('user_phone')        ?? '-';
       _brokerName  = prefs.getString('user_brokerName')   ?? '-';
@@ -38,6 +46,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _hasCompany  = prefs.getString('user_has_company')  ?? '-';
       _accountType = prefs.getString('user_account_type') ?? '-';
     });
+    await _fetchClientDetails(cds, token);
+  }
+
+  // ── Client details (name, mobile, bank) straight from ctrade ───────────
+  Future<void> _fetchClientDetails(String cds, String token) async {
+    if (cds.isEmpty || cds == '-') return;
+    setState(() => _isLoadingDetails = true);
+    try {
+      final uri = Uri.parse(
+        'https://myapi.zmx.co.zw/api/legacy/ctrade/getAllDetails'
+            '?cdsNumber=$cds',
+      );
+      final response = await http.get(uri, headers: {
+        'Authorization': 'Bearer $token',
+      }).timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        if (data.isNotEmpty) {
+          final details = Map<String, dynamic>.from(data[0]);
+          final forenames = details['Forenames']?.toString() ?? '';
+          final surname   = details['Surname']?.toString()   ?? '';
+          final fullName  = '$forenames $surname'.trim();
+          setState(() {
+            if (fullName.isNotEmpty) _name = fullName;
+            _cds      = details['CDS_Number']?.toString() ?? _cds;
+            _phone    = details['Mobile']?.toString()     ?? _phone;
+            _cashBank = details['Cash_Bank']?.toString();
+          });
+        }
+      }
+    } catch (_) {}
+    finally {
+      if (mounted) setState(() => _isLoadingDetails = false);
+    }
   }
 
   @override
@@ -254,18 +297,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return _infoCard(
       title: 'Banking Information',
       children: [
-        _bankAccountCard(
-          bank: 'FBC Bank',
-          branch: 'Samora',
-          accountNumber: '1234*****678',
-          accountType: 'ZiG',
-        ),
-        const SizedBox(height: 12),
-        _bankAccountCard(
-          bank: 'FBC Bank',
-          branch: 'Samora',
-          accountNumber: '1234*****678',
-          accountType: 'USD',
+        _infoRow(
+          'Cash Bank',
+          _isLoadingDetails
+              ? '…'
+              : (_cashBank?.isNotEmpty == true ? _cashBank! : '—'),
         ),
       ],
     );
@@ -364,49 +400,4 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _bankAccountCard({
-    required String bank,
-    required String branch,
-    required String accountNumber,
-    required String accountType,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFAF6EE),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-            color: const Color(0xFFD4A017).withOpacity(0.2), width: 1),
-      ),
-      child: Column(
-        children: [
-          _bankRow('Bank',           bank),
-          const SizedBox(height: 8),
-          _bankRow('Branch',         branch),
-          const SizedBox(height: 8),
-          _bankRow('Account Number', accountNumber),
-          const SizedBox(height: 8),
-          _bankRow('Account Type',   accountType),
-        ],
-      ),
-    );
-  }
-
-  Widget _bankRow(String label, String value) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label,
-            style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF1A1A1A))),
-        Text(value,
-            style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey.shade700,
-                fontWeight: FontWeight.w500)),
-      ],
-    );
-  }
 }

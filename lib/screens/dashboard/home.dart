@@ -22,11 +22,10 @@ class _HomeContentState extends State<HomeContent>
   String _userName = '';
   String _userCds  = '';
 
-  // ── Wallet balances ───────────────────────────────────────────────────
-  Map<String, dynamic>? _zigBalance;
-  Map<String, dynamic>? _usdBalance;
-  bool _isLoadingZig = false;
-  bool _isLoadingUsd = false;
+  // ── Wallet balance ────────────────────────────────────────────────────
+  Map<String, dynamic>? _accountBalance;
+  bool _isLoadingBalance = false;
+  String _userToken = '';
 
   List<Map<String, dynamic>> _primaryCommodities   = [];
   List<Map<String, dynamic>> _secondaryCommodities = [];
@@ -82,63 +81,36 @@ class _HomeContentState extends State<HomeContent>
     final prefs = await SharedPreferences.getInstance();
     final cds = prefs.getString('user_cds') ?? '';
     setState(() {
-      _userName = prefs.getString('user_name') ?? 'User';
-      _userCds  = cds;
+      _userName  = prefs.getString('user_name') ?? 'User';
+      _userCds   = cds;
+      _userToken = prefs.getString('user_token') ?? '';
     });
-    // Fetch both balances once we have the CDS
-    await Future.wait([
-      _fetchZigBalance(cds),
-      _fetchUsdBalance(cds),
-    ]);
+    await _fetchAccountBalance(cds);
   }
 
-  // ── ZIG balance ───────────────────────────────────────────────────────
-  Future<void> _fetchZigBalance([String? cds]) async {
+  // ── Account balance (cash + portfolio) ─────────────────────────────────
+  Future<void> _fetchAccountBalance([String? cds]) async {
     final number = cds ?? _userCds;
     if (number.isEmpty) return;
-    setState(() => _isLoadingZig = true);
+    setState(() => _isLoadingBalance = true);
     try {
       final uri = Uri.parse(
-        'https://system.zmx.co.zw/ZMX-API/Subscriber/getCashBalance'
+        'https://myapi.zmx.co.zw/v1/account/balance'
             '?cdsNumber=$number',
       );
-      final response =
-      await http.get(uri).timeout(const Duration(seconds: 15));
+      final response = await http.get(uri, headers: {
+        'Authorization': 'Bearer $_userToken',
+      }).timeout(const Duration(seconds: 15));
       if (!mounted) return;
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        if (data.isNotEmpty) {
-          setState(() => _zigBalance = Map<String, dynamic>.from(data[0]));
+        final data = jsonDecode(response.body);
+        if (data is Map) {
+          setState(() => _accountBalance = Map<String, dynamic>.from(data));
         }
       }
     } catch (_) {}
     finally {
-      if (mounted) setState(() => _isLoadingZig = false);
-    }
-  }
-
-  // ── USD balance ───────────────────────────────────────────────────────
-  Future<void> _fetchUsdBalance([String? cds]) async {
-    final number = cds ?? _userCds;
-    if (number.isEmpty) return;
-    setState(() => _isLoadingUsd = true);
-    try {
-      final uri = Uri.parse(
-        'https://system.zmx.co.zw/ZMX-API/Subscriber/getCashBalanceForex'
-            '?cdsNumber=$number',
-      );
-      final response =
-      await http.get(uri).timeout(const Duration(seconds: 15));
-      if (!mounted) return;
-      if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        if (data.isNotEmpty) {
-          setState(() => _usdBalance = Map<String, dynamic>.from(data[0]));
-        }
-      }
-    } catch (_) {}
-    finally {
-      if (mounted) setState(() => _isLoadingUsd = false);
+      if (mounted) setState(() => _isLoadingBalance = false);
     }
   }
 
@@ -483,10 +455,7 @@ class _HomeContentState extends State<HomeContent>
                         letterSpacing: 0.3)),
               ]),
               GestureDetector(
-                onTap: () {
-                  _fetchZigBalance();
-                  _fetchUsdBalance();
-                },
+                onTap: () => _fetchAccountBalance(),
                 child: Icon(Icons.refresh_rounded,
                     color: Colors.white.withOpacity(0.3), size: 15),
               ),
@@ -494,12 +463,14 @@ class _HomeContentState extends State<HomeContent>
           ),
           const SizedBox(height: 10),
 
-          // ── ZIG + USD total account side by side ──────────────────
+          // ── Cash + portfolio value side by side ────────────────────
           Row(
             children: [
-              Expanded(child: _buildBalancePill('ZiG', _zigBalance, _isLoadingZig)),
+              Expanded(child: _buildBalancePill(
+                  'Cash', 'amount', _accountBalance, _isLoadingBalance)),
               const SizedBox(width: 10),
-              Expanded(child: _buildBalancePill('USD', _usdBalance, _isLoadingUsd)),
+              Expanded(child: _buildBalancePill(
+                  'Portfolio', 'portfolio', _accountBalance, _isLoadingBalance)),
             ],
           ),
 
@@ -569,11 +540,10 @@ class _HomeContentState extends State<HomeContent>
     );
   }
 
-  // ── Single balance pill (ZiG or USD) ──────────────────────────────────
+  // ── Single balance pill (Cash or Portfolio) ─────────────────────────────
   Widget _buildBalancePill(
-      String currency, Map<String, dynamic>? data, bool loading) {
-    final totalAcct = data?['totalAccount']?.toString();
-    final isZig     = currency == 'ZiG';
+      String label, String field, Map<String, dynamic>? data, bool loading) {
+    final value = data?[field]?.toString();
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -592,7 +562,7 @@ class _HomeContentState extends State<HomeContent>
               color: _gold.withOpacity(0.15),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Text(currency,
+            child: Text(label,
                 style: const TextStyle(
                     color: _gold,
                     fontSize: 10,
@@ -614,18 +584,16 @@ class _HomeContentState extends State<HomeContent>
             ),
           )
               : Text(
-            totalAcct != null
-                ? '${isZig ? '' : '\$'}${_fmt(totalAcct)}'
-                : '—',
+            value != null ? '\$${_fmt(value)}' : '—',
             style: TextStyle(
-                color: totalAcct != null ? _green : Colors.white38,
+                color: value != null ? _green : Colors.white38,
                 fontSize: 12,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 0.3),
           ),
 
           const SizedBox(height: 3),
-          Text('Total Account',
+          Text(label == 'Cash' ? 'Available Cash' : 'Portfolio Value',
               style: TextStyle(
                   color: Colors.white.withOpacity(0.35),
                   fontSize: 9,

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:zmx/screens/auth/login/login.dart';
 
 class SignUpScreen extends StatefulWidget {
@@ -316,8 +317,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
       );
 
       request.fields['password'] = _passwordController.text.trim();
-      request.fields['accountsClientsWeb'] =
-          jsonEncode(accountsClientsWeb);
+      // The API expects this part with an explicit application/json
+      // Content-Type (see the working curl example), not the default
+      // text/plain that request.fields[...] would send.
+      request.files.add(
+        http.MultipartFile.fromString(
+          'accountsClientsWeb',
+          jsonEncode(accountsClientsWeb),
+          contentType: MediaType('application', 'json'),
+        ),
+      );
 
       if (isCorporate && _representatives.isNotEmpty) {
         final repsJson = _representatives.map((r) => r.toJson()).toList();
